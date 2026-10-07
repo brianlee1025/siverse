@@ -45,6 +45,21 @@ Then try telling the manager something like:
 
 > Set up Marketing, Research and Engineering departments for a coffee subscription startup, then have Marketing write a launch announcement.
 
+### Run the AI office on your Claude plan (no API key)
+
+In **Settings**, switch on **AI office** and choose **Claude Code on this computer**. The manager and every worker then run as the [Claude Code](https://code.claude.com) CLI on this computer (`claude -p`), on your own Claude Pro/Max login, so they count towards your plan's usage limits instead of being billed to an API key.
+
+- Siverse finds the CLI on your `PATH`, or the copy the Claude desktop app keeps, and shows which one in Settings. Set `CLAUDE_CODE_BIN` to point it somewhere else.
+- **Sign in once first.** Run that CLI in a terminal and use `/login`, so it can run on its own. (The desktop app's own copy uses the app's sign-in only while the app runs it.)
+- Each worker runs in its department's folder on the drive and can only write there and in its department's notes. It can read the whole drive, and uses the web only if the department allows it. No shell, no MCP servers from your own Claude Code setup.
+- The manager gets the office's tools (departments, tasks, schedules, results) through a small MCP server, `scripts/siverse-mcp.mjs`, that calls this server's local API. Its conversation is resumed for every message; **☀️ New day** starts a fresh one.
+- Department notes are the same files for both engines, so switching keeps what each department has learned.
+- These runs work in `workspace/` and `data/`, so the **Watch Claude Code** view leaves them out instead of showing them twice.
+
+### Recurring tasks
+
+Give a department a standing job on a timetable: every day at a time, a weekday each week, or every few hours (local time). Add one in the department's window, or tell the manager, e.g. *"Every Monday at 9, have Research find new padel clubs opening in the US and add them to leads.csv."* Each run is told to build on the previous runs' work and the department's notes. If the office was closed when a run was due, it runs once when Siverse starts. A run that is still going makes the next one skip. **🧹 Weekly notes tidy-up** adds a Sunday-evening job that keeps a department's notes short and current. Schedules only fire while Siverse is running.
+
 ### Demo mode (no API key, no cost)
 
 ```bash
@@ -98,6 +113,7 @@ Requests use adaptive thinking with progress updates (`display: "updates"`), whi
 | `HOST` | `127.0.0.1` | Bind address |
 | `MAX_CONCURRENT_WORKERS` | `4` | Workers allowed at desks across the whole office |
 | `SIVERSE_DEMO` | unset | `1` runs workers without the API (`npm run demo`) |
+| `CLAUDE_CODE_BIN` | found automatically | The Claude Code CLI to run for the "Claude Code on this computer" engine |
 
 ## Scripts
 

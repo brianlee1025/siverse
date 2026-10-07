@@ -3,8 +3,9 @@ import path from "node:path";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { BetaMessage, BetaMessageParam, BetaToolResultBlockParam } from "@anthropic-ai/sdk/resources/beta/messages";
 import { z } from "zod";
-import type { Department } from "../shared/types";
+import type { Department, ScheduleCadence } from "../shared/types";
 import { MAX_HEADCOUNT, isClaudeCode } from "../shared/types";
+import { forgetClaudeCodeManager, handleBossMessageClaudeCode } from "./ccManager";
 import { blockActivity, explainError, finalText, modelParams, shorten } from "./claude";
 import { COMPANY_MEMORY_DIR, DATA_DIR, MANAGER_MAX_ITERATIONS, MAX_CONCURRENT_WORKERS } from "./config";
 import { listDrive, readDriveFile } from "./drive";
@@ -17,6 +18,7 @@ import {
   createDepartment,
   updateDepartment,
 } from "./office";
+import { createSchedule, deleteSchedule, describeSchedules, findSchedule, runScheduleNow, updateSchedule } from "./schedules";
 import { getClient, getSettings } from "./settings";
 import { addChat, changed, findDepartment, findTask, managerStatus, state } from "./store";
 
@@ -44,16 +46,18 @@ export function startNewDay() {
   if (managerStatus.busy) throw new OfficeError("The manager is still busy. Try again in a moment.");
   history = [];
   saveHistory();
+  forgetClaudeCodeManager();
   addChat("system", "☀️ A new workday begins. The manager starts fresh but keeps their notes.", { tone: "info" });
 }
 
-function systemPrompt(companyName: string) {
+export function systemPrompt(companyName: string) {
   return `You are the office manager of ${companyName}, a company in Siverse, a 3D office simulator. The person chatting with you is the boss. The work is real: you turn the boss's instructions into an organisation that gets it done.
 
 How the office works:
 - Departments are teams that each focus on one genre of work (for example Marketing for copywriting and social posts, Engineering for code, Research for investigation and reports). Each has standing instructions and a headcount, which is how many of its tasks can be worked on at once.
 - Every task goes to exactly one department. A worker picks it up, does the work, and saves deliverables to the company drive (one folder per department). Workers can't ask questions mid-task, so write self-contained briefs: the goal, audience, format, length, and anything the boss said that matters.
 - Up to ${MAX_CONCURRENT_WORKERS} workers can be at their desks across the whole office; extra tasks wait in a queue.
+- Schedules are recurring tasks a department runs on a timetable (daily, weekly, or every few hours, in local time). Each run sees the earlier runs' work and the department's notes, so a schedule is how the boss gets standing jobs like a weekly report.
 
 How to act:
 - Do what the boss asks with your tools instead of describing what you would do.
@@ -65,7 +69,7 @@ How to act:
 - Reply like a sharp, friendly chief of staff: a few short sentences, plain text, no headings. Say which department got which task.`;
 }
 
-function officeStatus(): string {
+export function officeStatus(): string {
   const lines = [`Company: ${getSettings().companyName}`];
   // Claude Code projects are only mirrored in the office; the manager doesn't run them.
   const departments = state.departments.filter((d) => !isClaudeCode(d));
@@ -92,6 +96,9 @@ function officeStatus(): string {
       lines.push(`- ${t.id} | ${department} | ${t.status} | "${t.title}"${detail}`);
     }
   }
+  const schedules = describeSchedules();
+  lines.push(schedules.length ? "Schedules:" : "Schedules: none yet.", ...schedules);
+  lines.push(`Local time now: ${new Date().toLocaleString()}`);
   return lines.join("\n");
 }
 
@@ -240,8 +247,72 @@ function managerTools() {
       inputSchema: z.object({ path: z.string().describe('Drive path, e.g. "marketing/launch-post.md"') }),
       run: ({ path }) => readDriveFile(path),
     }),
+    betaZodTool({
+      name: "create_schedule",
+      description:
+        "Give a department a recurring task that runs on a timetable, e.g. every Monday at 09:00. Each run builds on the last one's work and the department's notes.",
+      inputSchema: z.object({
+        department: z.string().describe("Department id or name"),
+        title: z.string().describe("Short title, under 80 characters"),
+        brief: z.string().describe("Self-contained brief for every run"),
+        cadence: cadenceSchema,
+      }),
+      run: ({ department, title, brief, cadence }) => {
+        const schedule = createSchedule(requireDepartment(department), { title, brief, cadence: cadence as ScheduleCadence });
+        return `Created schedule ${schedule.id}. First run ${new Date(schedule.nextRunAt).toLocaleString()}.`;
+      },
+    }),
+    betaZodTool({
+      name: "update_schedule",
+      description: "Change a schedule's title, brief or timetable, or pause (enabled: false) and resume it.",
+      inputSchema: z.object({
+        schedule_id: z.string(),
+        title: z.string().optional(),
+        brief: z.string().optional(),
+        cadence: cadenceSchema.optional(),
+        enabled: z.boolean().optional(),
+      }),
+      run: ({ schedule_id, title, brief, cadence, enabled }) => {
+        const schedule = requireSchedule(schedule_id);
+        updateSchedule(schedule, { title, brief, cadence: cadence as ScheduleCadence | undefined, enabled });
+        return schedule.enabled ? `Updated. Next run ${new Date(schedule.nextRunAt).toLocaleString()}.` : "Paused.";
+      },
+    }),
+    betaZodTool({
+      name: "delete_schedule",
+      description: "Remove a schedule. Tasks it already started are not affected.",
+      inputSchema: z.object({ schedule_id: z.string() }),
+      run: ({ schedule_id }) => {
+        deleteSchedule(requireSchedule(schedule_id));
+        return `Removed ${schedule_id}.`;
+      },
+    }),
+    betaZodTool({
+      name: "run_schedule_now",
+      description: "Start a schedule's task right away, without changing its timetable.",
+      inputSchema: z.object({ schedule_id: z.string() }),
+      run: ({ schedule_id }) => `Started ${runScheduleNow(requireSchedule(schedule_id)).id}.`,
+    }),
     createMemoryTool(COMPANY_MEMORY_DIR),
   ];
+}
+
+const cadenceSchema = z
+  .discriminatedUnion("kind", [
+    z.object({ kind: z.literal("daily"), time: z.string().describe("24-hour HH:MM") }),
+    z.object({
+      kind: z.literal("weekly"),
+      day: z.number().int().min(0).max(6).describe("0 = Sunday … 6 = Saturday"),
+      time: z.string().describe("24-hour HH:MM"),
+    }),
+    z.object({ kind: z.literal("interval"), hours: z.number().int().min(1).describe("Hours between runs") }),
+  ])
+  .describe("When it runs, in local time");
+
+function requireSchedule(id: string) {
+  const schedule = findSchedule(id);
+  if (!schedule) throw new OfficeError(`No schedule ${id}.`);
+  return schedule;
 }
 
 /** If the last turn stopped with tool calls that never got results, answer them before moving on. */
@@ -261,6 +332,10 @@ function danglingToolResults(): BetaToolResultBlockParam[] {
 export async function handleBossMessage(text: string) {
   if (managerStatus.busy) throw new OfficeError("The manager is still replying. Wait a moment.");
   addChat("boss", text);
+
+  if (getSettings().engine === "claude-code") {
+    return handleBossMessageClaudeCode(text, officeStatus(), systemPrompt(getSettings().companyName));
+  }
 
   const client = getClient();
   if (!client) {

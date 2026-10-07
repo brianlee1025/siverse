@@ -27,6 +27,30 @@ export interface TaskUsage {
   cacheReadTokens: number;
 }
 
+// Who does the office's work. "api": Siverse's own agents on the Claude API, billed to an
+// API key. "claude-code": each worker (and the manager) is a run of the Claude Code CLI on this
+// computer, on the boss's own Claude plan.
+export type Engine = "api" | "claude-code";
+
+// When a recurring task comes round, in the server's local time.
+export type ScheduleCadence =
+  | { kind: "daily"; time: string } // "09:00"
+  | { kind: "weekly"; day: number; time: string } // day: 0 = Sunday … 6 = Saturday
+  | { kind: "interval"; hours: number }; // every N hours from when it was set up
+
+export interface Schedule {
+  id: string;
+  departmentId: string;
+  title: string;
+  brief: string;
+  cadence: ScheduleCadence;
+  enabled: boolean;
+  createdAt: number;
+  nextRunAt: number;
+  lastRunAt?: number;
+  lastTaskId?: string;
+}
+
 export interface Task {
   id: string;
   departmentId: string;
@@ -46,6 +70,9 @@ export interface Task {
   source?: Source; // missing = "office"
   kind?: "session" | "subagent"; // claude-code only
   sessionId?: string; // claude-code only
+  scheduleId?: string; // started by a recurring schedule
+  engine?: Engine; // who ran it; missing = "api"
+  costUsd?: number; // claude-code engine: what Claude Code reports the run would cost on the API
 }
 
 export type ChatRole = "boss" | "manager" | "system";
@@ -66,6 +93,9 @@ export interface SettingsView {
   apiKeyHint: string | null; // last 4 characters, never the key itself
   managerModel: string;
   workerModel: string;
+  engine: Engine;
+  claudeCodeCli: { path: string | null; version: string | null }; // the Claude Code CLI on this computer
+  ready: boolean; // the chosen engine can run work right now
 }
 
 export interface FeedItem {
@@ -86,6 +116,7 @@ export interface Snapshot {
   settings: SettingsView;
   departments: Department[];
   tasks: Task[];
+  schedules: Schedule[];
   chat: ChatMessage[];
   manager: { busy: boolean; activity: string | null };
   maxConcurrentWorkers: number;
@@ -102,5 +133,19 @@ export const MODEL_OPTIONS = [
 ] as const;
 
 export const MAX_HEADCOUNT = 6;
+
+export const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+
+/** "Every Monday at 09:00", "Every day at 18:30", "Every 6 hours". */
+export function describeCadence(cadence: ScheduleCadence): string {
+  switch (cadence.kind) {
+    case "daily":
+      return `Every day at ${cadence.time}`;
+    case "weekly":
+      return `Every ${WEEKDAYS[cadence.day] ?? "week"} at ${cadence.time}`;
+    case "interval":
+      return cadence.hours === 1 ? "Every hour" : `Every ${cadence.hours} hours`;
+  }
+}
 
 export const isClaudeCode = (item: { source?: Source }) => item.source === "claude-code";

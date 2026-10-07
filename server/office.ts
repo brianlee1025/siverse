@@ -1,10 +1,12 @@
 import type { Department, Task } from "../shared/types";
 import { MAX_HEADCOUNT, isClaudeCode } from "../shared/types";
 import { DEMO_MODE, MAX_CONCURRENT_WORKERS } from "./config";
+import { runClaudeCodeWorker } from "./ccWorker";
 import { explainError } from "./claude";
 import { runDemoWorker } from "./demo";
 import { pickWorkerName } from "./names";
-import { aiOfficeEnabled, getClient } from "./settings";
+import { deleteDepartmentSchedules } from "./schedules";
+import { aiOfficeEnabled, engineReady, getSettings } from "./settings";
 import { addChat, changed, findDepartment, newId, nextDepartmentColor, slugify, state } from "./store";
 import { runWorker } from "./worker";
 
@@ -72,10 +74,16 @@ export function closeDepartment(department: Department) {
     throw new OfficeError(`${department.name} still has ${active.length} open task(s). Cancel them first.`);
   }
   state.departments = state.departments.filter((d) => d.id !== department.id);
+  deleteDepartmentSchedules(department.id);
   changed();
 }
 
-export function assignTask(department: Department, title: string, brief: string): Task {
+export function assignTask(
+  department: Department,
+  title: string,
+  brief: string,
+  extra: Pick<Task, "scheduleId"> = {},
+): Task {
   const task: Task = {
     id: newId("task"),
     departmentId: department.id,
@@ -86,6 +94,7 @@ export function assignTask(department: Department, title: string, brief: string)
     outputs: [],
     usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 },
     createdAt: Date.now(),
+    ...extra,
   };
   state.tasks.push(task);
   changed();
@@ -112,7 +121,7 @@ export function retryTask(task: Task): Task {
   rejectClaudeCode(task);
   const department = state.departments.find((d) => d.id === task.departmentId);
   if (!department) throw new OfficeError("That department no longer exists.");
-  return assignTask(department, task.title, task.brief);
+  return assignTask(department, task.title, task.brief, { scheduleId: task.scheduleId });
 }
 
 function finish(task: Task, status: Task["status"], fields: Partial<Task> = {}) {
@@ -122,7 +131,7 @@ function finish(task: Task, status: Task["status"], fields: Partial<Task> = {}) 
 
 /** Starts queued tasks, oldest first, while departments have free desks. */
 export function schedule() {
-  if (!aiOfficeEnabled() || (!getClient() && !DEMO_MODE)) return;
+  if (!aiOfficeEnabled() || !engineReady()) return;
   for (const task of state.tasks) {
     if (running.size >= MAX_CONCURRENT_WORKERS) return;
     if (task.status !== "queued") continue;
@@ -144,17 +153,20 @@ export function schedule() {
 
 function start(task: Task, department: Department, deskIndex: number) {
   const namesInUse = new Set(state.tasks.filter((t) => t.status === "working").map((t) => t.workerName ?? ""));
+  const engine = getSettings().engine;
   Object.assign(task, {
     status: "working",
     startedAt: Date.now(),
     deskIndex,
     workerName: pickWorkerName(namesInUse),
+    engine,
   });
   changed();
 
   const controller = new AbortController();
   running.set(task.id, controller);
-  (DEMO_MODE ? runDemoWorker : runWorker)(task, department, controller.signal)
+  const run = DEMO_MODE ? runDemoWorker : engine === "claude-code" ? runClaudeCodeWorker : runWorker;
+  run(task, department, controller.signal)
     .then((summary) => {
       finish(task, "done", { summary });
       addChat("system", `✅ ${task.workerName} in ${department.name} finished "${task.title}".`, {

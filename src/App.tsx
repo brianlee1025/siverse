@@ -16,12 +16,13 @@ export function App() {
   const boardOpen = useStore((s) => s.boardOpen);
   const openModal = useStore((s) => s.openModal);
 
-  // First visit without an API key: open Settings once (per browser) so the boss knows what to do.
+  // First visit with the office unable to run (no API key, or no Claude Code CLI): open Settings
+  // once (per browser) so the boss knows what to do.
   const checkedKey = useRef(false);
   useEffect(() => {
     if (!snapshot || checkedKey.current) return;
     checkedKey.current = true;
-    if (!snapshot.settings.aiOffice || snapshot.settings.apiKeySource) return;
+    if (!snapshot.settings.aiOffice || snapshot.settings.ready) return;
     try {
       if (localStorage.getItem("siverse.promptedForKey")) return;
       localStorage.setItem("siverse.promptedForKey", "1");

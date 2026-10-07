@@ -1,6 +1,6 @@
 import Markdown from "react-markdown";
 import type { Snapshot } from "../../shared/types";
-import { isClaudeCode } from "../../shared/types";
+import { describeCadence, isClaudeCode } from "../../shared/types";
 import { api, useStore } from "../store";
 import { STATUS_LABEL } from "./TaskBoard";
 
@@ -13,6 +13,7 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
   const department = snapshot.departments.find((d) => d.id === task.departmentId);
   const fromClaudeCode = isClaudeCode(task);
   const active = !fromClaudeCode && (task.status === "working" || task.status === "queued");
+  const schedule = task.scheduleId ? snapshot.schedules.find((s) => s.id === task.scheduleId) : undefined;
 
   const cancel = () => api("POST", `/api/tasks/${task.id}/cancel`);
   const retry = async () => {
@@ -43,6 +44,11 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
           <p className="muted tiny">
             ⚡ {task.kind === "subagent" ? "A subagent" : "A session"} in your Claude Code
             {department?.projectPath ? <> · <code>{department.projectPath}</code></> : null}
+          </p>
+        )}
+        {task.scheduleId && (
+          <p className="muted tiny">
+            ⏰ Recurring task{schedule ? ` · ${describeCadence(schedule.cadence).toLowerCase()}` : " (schedule removed)"}
           </p>
         )}
         {task.summary && (
@@ -89,6 +95,10 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
             {task.id} · {task.usage.inputTokens.toLocaleString()} in / {task.usage.outputTokens.toLocaleString()} out
             tokens
             {task.usage.cacheReadTokens ? ` · ${task.usage.cacheReadTokens.toLocaleString()} cached` : ""}
+            {task.engine === "claude-code" &&
+              ` · ran on Claude Code (your plan)${
+                typeof task.costUsd === "number" ? `, about $${task.costUsd.toFixed(2)} if it had used the API` : ""
+              }`}
           </p>
         )}
       </div>

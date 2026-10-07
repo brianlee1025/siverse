@@ -1,12 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
-import type { SettingsView } from "../shared/types";
+import type { Engine, SettingsView } from "../shared/types";
+import { findClaudeCli } from "./claudeCli";
 import { DATA_DIR, DEFAULT_MODEL, DEMO_MODE } from "./config";
 
 interface StoredSettings {
   companyName: string;
-  aiOffice: boolean; // Siverse's own manager and workers, which call the Claude API
+  aiOffice: boolean; // Siverse's own manager and workers
+  engine: Engine; // the Claude API (with a key), or Claude Code on this computer (on the boss's plan)
   apiKey?: string;
   managerModel: string;
   workerModel: string;
@@ -17,6 +19,7 @@ const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
 let settings: StoredSettings = {
   companyName: "Siverse Inc.",
   aiOffice: false,
+  engine: "api",
   managerModel: DEFAULT_MODEL,
   workerModel: DEFAULT_MODEL,
 };
@@ -44,6 +47,7 @@ export function updateSettings(patch: Partial<StoredSettings>) {
   const next = { ...settings };
   if (patch.companyName !== undefined) next.companyName = patch.companyName.trim().slice(0, 60) || settings.companyName;
   if (patch.aiOffice !== undefined) next.aiOffice = patch.aiOffice;
+  if (patch.engine === "api" || patch.engine === "claude-code") next.engine = patch.engine;
   if (patch.managerModel) next.managerModel = patch.managerModel.trim();
   if (patch.workerModel) next.workerModel = patch.workerModel.trim();
   if (patch.apiKey !== undefined) {
@@ -67,6 +71,7 @@ function envKey() {
 
 export function settingsView(): SettingsView {
   const key = settings.apiKey ?? envKey();
+  const cli = findClaudeCli();
   return {
     companyName: settings.companyName,
     aiOffice: aiOfficeEnabled(),
@@ -74,7 +79,16 @@ export function settingsView(): SettingsView {
     apiKeyHint: key ? key.slice(-4) : null,
     managerModel: settings.managerModel,
     workerModel: settings.workerModel,
+    engine: settings.engine,
+    claudeCodeCli: { path: cli?.path ?? null, version: cli?.version ?? null },
+    ready: engineReady(),
   };
+}
+
+/** Whether the chosen engine can run the manager and workers right now. */
+export function engineReady(): boolean {
+  if (DEMO_MODE) return true;
+  return settings.engine === "claude-code" ? Boolean(findClaudeCli()) : Boolean(getClient());
 }
 
 /** Returns a client, or null when no API key is configured yet. */

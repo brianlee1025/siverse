@@ -23,7 +23,8 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
   const setTab = useStore((s) => s.setChatTab);
   const list = useRef<HTMLDivElement>(null);
   const { busy, activity } = snapshot.manager;
-  const hasKey = Boolean(snapshot.settings.apiKeySource);
+  const ready = snapshot.settings.ready;
+  const onClaudeCode = snapshot.settings.engine === "claude-code";
   const last = snapshot.chat.at(-1);
 
   // Keep the newest message in view as replies stream in.
@@ -95,9 +96,9 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
         )}
       </div>
 
-      {!hasKey && (
+      {!ready && (
         <button className="chat__keyline" onClick={() => openModal({ type: "settings" })}>
-          🔑 Add your Claude API key to start →
+          {onClaudeCode ? "⚡ Claude Code wasn't found on this computer. Check Settings →" : "🔑 Add your Claude API key to start →"}
         </button>
       )}
       <form className="chat__composer" onSubmit={onSubmit}>

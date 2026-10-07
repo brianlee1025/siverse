@@ -2,7 +2,17 @@ import path from "node:path";
 import type { Department, FeedItem, Task } from "../shared/types";
 import { MAX_HEADCOUNT, isClaudeCode } from "../shared/types";
 import { shorten } from "./claude";
+import { DATA_DIR, DRIVE_DIR } from "./config";
 import { changed, claudeCodeLive, newId, nextDepartmentColor, slugify, state } from "./store";
+
+/** The office's own runs on the claude-code engine work in the drive or the data folder. */
+function isOfficeRun(cwd: string) {
+  const inside = (root: string) => {
+    const relative = path.relative(root, path.resolve(cwd));
+    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  };
+  return inside(DRIVE_DIR) || inside(DATA_DIR);
+}
 
 // Turns Claude Code hook events into the office: each project folder becomes a department, each
 // Claude Code session is a worker at a desk, and each subagent it launches walks in as another
@@ -180,6 +190,8 @@ export function handleHookEvent(event: HookEvent) {
   const sessionId = str(event.session_id);
   const cwd = str(event.cwd);
   if (!name || !sessionId || !cwd) return;
+  // Workers and the manager on the claude-code engine are already in the office as themselves.
+  if (isOfficeRun(cwd)) return;
 
   claudeCodeLive.lastEventAt = Date.now();
   sessionLastSeen.set(sessionId, Date.now());

@@ -6,11 +6,12 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { z } from "zod";
 import type { ServerMessage } from "../shared/types";
 import { MAX_HEADCOUNT } from "../shared/types";
+import { forgetClaudeCli } from "./claudeCli";
 import { handleHookEvent, sweepClaudeCode } from "./claudeCode";
 import { HOOK_PATH, install as installHooks, uninstall as uninstallHooks } from "./claudeCodeHooks";
 import { DIST_DIR, HOST, IS_PRODUCTION, PORT } from "./config";
 import { DriveError, listDrive, readDriveFile } from "./drive";
-import { handleBossMessage, loadManagerHistory, startNewDay } from "./manager";
+import { handleBossMessage, loadManagerHistory, officeStatus, startNewDay } from "./manager";
 import {
   OfficeError,
   assignTask,
@@ -21,6 +22,15 @@ import {
   schedule,
   updateDepartment,
 } from "./office";
+import {
+  createSchedule,
+  deleteSchedule,
+  findSchedule,
+  notesTidyUp,
+  runScheduleNow,
+  startScheduleClock,
+  updateSchedule,
+} from "./schedules";
 import { isLocalRequest, localOnly } from "./security";
 import { aiOfficeEnabled, loadSettings, updateSettings } from "./settings";
 import { changed, findDepartment, findTask, forgetHooksCheck, loadState, onChange, saveNow, snapshot } from "./store";
@@ -50,6 +60,7 @@ const ChatBody = z.object({ text: z.string().trim().min(1).max(8000) });
 const SettingsBody = z.object({
   companyName: z.string().max(60).optional(),
   aiOffice: z.boolean().optional(),
+  engine: z.enum(["api", "claude-code"]).optional(),
   apiKey: z.string().max(400).optional(),
   managerModel: z.string().max(80).optional(),
   workerModel: z.string().max(80).optional(),
@@ -64,6 +75,17 @@ const DepartmentBody = z.object({
 const TaskBody = z.object({
   title: z.string().min(1).max(120),
   brief: z.string().min(1).max(8000),
+});
+const Cadence = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("daily"), time: z.string().max(5) }),
+  z.object({ kind: z.literal("weekly"), day: z.number().int().min(0).max(6), time: z.string().max(5) }),
+  z.object({ kind: z.literal("interval"), hours: z.number().int().min(1).max(24 * 28) }),
+]);
+const ScheduleBody = z.object({
+  title: z.string().min(1).max(120),
+  brief: z.string().min(1).max(8000),
+  cadence: Cadence,
+  enabled: z.boolean().optional(),
 });
 
 const param = (req: Request, name: string) => String(req.params[name]);
@@ -90,8 +112,13 @@ app.post("/api/new-day", requireAiOffice, (_req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/office/status", requireAiOffice, (_req, res) => {
+  res.json({ status: officeStatus() });
+});
+
 app.put("/api/settings", (req, res) => {
   updateSettings(SettingsBody.parse(req.body));
+  forgetClaudeCli(); // look for the Claude Code CLI again, e.g. after installing it
   changed(); // push the new settings to every open browser
   schedule(); // A newly added key can start queued work.
   res.json(snapshot().settings);
@@ -139,6 +166,45 @@ app.post("/api/departments/:id/tasks", requireAiOffice, (req, res) => {
   if (!department) return void res.status(404).json({ error: "No such department." });
   const { title, brief } = TaskBody.parse(req.body);
   res.status(201).json(assignTask(department, title, brief));
+});
+
+app.post("/api/departments/:id/schedules", requireAiOffice, (req, res) => {
+  const department = findDepartment(param(req, "id"));
+  if (!department) return void res.status(404).json({ error: "No such department." });
+  res.status(201).json(createSchedule(department, ScheduleBody.parse(req.body)));
+});
+
+app.post("/api/departments/:id/schedules/notes-tidy-up", requireAiOffice, (req, res) => {
+  const department = findDepartment(param(req, "id"));
+  if (!department) return void res.status(404).json({ error: "No such department." });
+  res.status(201).json(createSchedule(department, notesTidyUp(department)));
+});
+
+app.patch("/api/schedules/:id", requireAiOffice, (req, res) => {
+  const schedule = findSchedule(param(req, "id"));
+  if (!schedule) return void res.status(404).json({ error: "No such schedule." });
+  updateSchedule(schedule, ScheduleBody.partial().parse(req.body));
+  res.json(schedule);
+});
+
+app.delete("/api/schedules/:id", requireAiOffice, (req, res) => {
+  const schedule = findSchedule(param(req, "id"));
+  if (!schedule) return void res.status(404).json({ error: "No such schedule." });
+  deleteSchedule(schedule);
+  res.json({ ok: true });
+});
+
+app.post("/api/schedules/:id/run", requireAiOffice, (req, res) => {
+  const schedule = findSchedule(param(req, "id"));
+  if (!schedule) return void res.status(404).json({ error: "No such schedule." });
+  res.status(201).json(runScheduleNow(schedule));
+});
+
+app.get("/api/tasks/:id", (req, res) => {
+  const task = findTask(param(req, "id"));
+  if (!task) return void res.status(404).json({ error: "No such task." });
+  const { id, title, status, workerName, summary, outputs, error, activity, scheduleId } = task;
+  res.json({ id, title, status, worker: workerName, summary, outputs, error, scheduleId, recent_activity: activity.slice(-4) });
 });
 
 app.post("/api/tasks/:id/cancel", (req, res) => {
@@ -221,6 +287,7 @@ server.listen(PORT, HOST, () => {
   const url = IS_PRODUCTION ? `http://localhost:${PORT}` : "http://localhost:5173";
   console.log(`\n  🏢 Siverse server on http://${HOST}:${PORT}  →  open ${url}\n`);
   schedule();
+  startScheduleClock();
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

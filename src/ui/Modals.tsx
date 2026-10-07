@@ -1,6 +1,15 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import Markdown from "react-markdown";
-import { MAX_HEADCOUNT, MODEL_OPTIONS, type Department, type Snapshot } from "../../shared/types";
+import {
+  MAX_HEADCOUNT,
+  MODEL_OPTIONS,
+  WEEKDAYS,
+  describeCadence,
+  type Department,
+  type Schedule,
+  type ScheduleCadence,
+  type Snapshot,
+} from "../../shared/types";
 import { api, useStore } from "../store";
 
 export function Modals({ snapshot }: { snapshot: Snapshot }) {
@@ -12,7 +21,13 @@ export function Modals({ snapshot }: { snapshot: Snapshot }) {
     case "department": {
       const department = snapshot.departments.find((d) => d.id === modal.departmentId) ?? null;
       if (department?.source === "claude-code") return <ClaudeCodeProjectModal department={department} snapshot={snapshot} />;
-      return <DepartmentModal key={modal.departmentId ?? "new"} department={department} />;
+      return (
+        <DepartmentModal
+          key={modal.departmentId ?? "new"}
+          department={department}
+          schedules={snapshot.schedules.filter((s) => s.departmentId === department?.id)}
+        />
+      );
     }
     case "drive":
       return <DriveModal />;
@@ -66,12 +81,14 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
   const [apiKey, setApiKey] = useState("");
   const [managerModel, setManagerModel] = useState(settings.managerModel);
   const [workerModel, setWorkerModel] = useState(settings.workerModel);
+  const [engine, setEngine] = useState(settings.engine);
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
     await api("PUT", "/api/settings", {
       companyName,
       aiOffice,
+      engine,
       managerModel,
       workerModel,
       ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
@@ -98,14 +115,49 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
           <span>
             <strong>AI office</strong>
             <small>
-              Siverse's own manager and workers, who take orders in the chat and do real work. Uses the Claude API,
-              which is billed separately from Claude Pro/Max plans. Watching Claude Code doesn't need this.
+              Siverse's own manager and workers, who take orders in the chat and do real work. Watching Claude Code
+              doesn't need this.
             </small>
           </span>
         </label>
 
         {aiOffice && (
+          <fieldset>
+            <legend>Who does the work</legend>
+            <label className="checkbox toggle">
+              <input type="radio" name="engine" checked={engine === "claude-code"} onChange={() => setEngine("claude-code")} />
+              <span>
+                <strong>Claude Code on this computer</strong>
+                <small>
+                  Uses your Claude Pro/Max plan, with no API key. The manager and every worker run as Claude Code on this
+                  computer, so they count towards your plan's usage limits. Siverse must stay running for schedules.
+                </small>
+              </span>
+            </label>
+            <label className="checkbox toggle">
+              <input type="radio" name="engine" checked={engine === "api"} onChange={() => setEngine("api")} />
+              <span>
+                <strong>Claude API</strong>
+                <small>Uses an API key from console.anthropic.com, billed per use, separately from Claude plans.</small>
+              </span>
+            </label>
+            {engine === "claude-code" &&
+              (settings.claudeCodeCli.path ? (
+                <p className="hint ok tiny">
+                  Found Claude Code {settings.claudeCodeCli.version} at <code>{settings.claudeCodeCli.path}</code>.
+                </p>
+              ) : (
+                <p className="hint tiny">
+                  Claude Code wasn't found. Install it (or the Claude desktop app), sign in once, then save again. You
+                  can also point Siverse at it with <code>CLAUDE_CODE_BIN</code> in <code>.env</code>.
+                </p>
+              ))}
+          </fieldset>
+        )}
+
+        {aiOffice && (
           <>
+            {engine === "api" && (
             <fieldset>
               <legend>Claude API key</legend>
               {settings.apiKeySource === "env" && (
@@ -140,6 +192,7 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
                 Stored only on this computer in <code>data/settings.json</code>. It is never sent back to the browser.
               </p>
             </fieldset>
+            )}
 
             <div className="form__row">
               <label>
@@ -152,7 +205,9 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
               </label>
             </div>
             <p className="hint tiny">
-              Every running worker is its own stream of API calls. A cheaper worker model lowers the cost of a busy office.
+              {engine === "claude-code"
+                ? "Every running worker is its own Claude Code run. A lighter worker model makes your plan's usage go further."
+                : "Every running worker is its own stream of API calls. A cheaper worker model lowers the cost of a busy office."}
             </p>
           </>
         )}
@@ -170,7 +225,7 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
-function DepartmentModal({ department }: { department: Department | null }) {
+function DepartmentModal({ department, schedules }: { department: Department | null; schedules: Schedule[] }) {
   const openModal = useStore((s) => s.openModal);
   const showToast = useStore((s) => s.showToast);
   const [name, setName] = useState(department?.name ?? "");
@@ -246,7 +301,7 @@ function DepartmentModal({ department }: { department: Department | null }) {
         </label>
         <label className="checkbox">
           <input type="checkbox" checked={webAccess} onChange={(e) => setWebAccess(e.target.checked)} />
-          Workers may search and read the web (uses web search, billed per search)
+          Workers may search and read the web
         </label>
         <div className="form__actions">
           {department && (
@@ -279,8 +334,169 @@ function DepartmentModal({ department }: { department: Department | null }) {
           </div>
         </form>
       )}
+
+      {department && <SchedulesSection department={department} schedules={schedules} />}
     </Modal>
   );
+}
+
+function SchedulesSection({ department, schedules }: { department: Department; schedules: Schedule[] }) {
+  const showToast = useStore((s) => s.showToast);
+  const [adding, setAdding] = useState(false);
+  const [title, setTitle] = useState("");
+  const [brief, setBrief] = useState("");
+  const [kind, setKind] = useState<ScheduleCadence["kind"]>("weekly");
+  const [time, setTime] = useState("09:00");
+  const [day, setDay] = useState(1);
+  const [hours, setHours] = useState(24);
+  const hasTidyUp = schedules.some((s) => s.title.startsWith("Tidy up"));
+
+  const cadence = (): ScheduleCadence =>
+    kind === "daily" ? { kind, time } : kind === "weekly" ? { kind, day, time } : { kind, hours };
+
+  const add = async (e: FormEvent) => {
+    e.preventDefault();
+    await api("POST", `/api/departments/${department.id}/schedules`, { title, brief, cadence: cadence() });
+    showToast(`${department.name} will do "${title}" ${describeCadence(cadence()).toLowerCase()}.`);
+    setTitle("");
+    setBrief("");
+    setAdding(false);
+  };
+
+  const addTidyUp = async () => {
+    await api("POST", `/api/departments/${department.id}/schedules/notes-tidy-up`);
+    showToast(`${department.name} will tidy up its notes every Sunday evening.`);
+  };
+
+  return (
+    <section className="form form--section">
+      <h3>⏰ Recurring tasks</h3>
+      {schedules.length === 0 ? (
+        <p className="muted tiny">
+          None yet. A recurring task runs on a timetable, and each run builds on the last one's work and the
+          department's notes.
+        </p>
+      ) : (
+        <ul className="schedule-list">
+          {schedules.map((s) => (
+            <ScheduleRow key={s.id} schedule={s} />
+          ))}
+        </ul>
+      )}
+
+      {adding ? (
+        <form className="form" onSubmit={add}>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Weekly lead list" maxLength={120} required />
+          <textarea
+            value={brief}
+            onChange={(e) => setBrief(e.target.value)}
+            rows={3}
+            placeholder="What should they do each time? e.g. Find padel clubs opening in the US and add them to leads.csv"
+            required
+          />
+          <div className="form__row">
+            <label>
+              Runs
+              <select value={kind} onChange={(e) => setKind(e.target.value as ScheduleCadence["kind"])}>
+                <option value="daily">Every day</option>
+                <option value="weekly">Every week</option>
+                <option value="interval">Every few hours</option>
+              </select>
+            </label>
+            {kind === "weekly" && (
+              <label>
+                On
+                <select value={day} onChange={(e) => setDay(Number(e.target.value))}>
+                  {WEEKDAYS.map((name, i) => (
+                    <option key={name} value={i}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {kind !== "interval" ? (
+              <label className="form__narrow">
+                At
+                <input type="time" value={time} onChange={(e) => setTime(e.target.value)} required />
+              </label>
+            ) : (
+              <label className="form__narrow">
+                Hours
+                <input
+                  type="number"
+                  min={1}
+                  max={24 * 28}
+                  value={hours}
+                  onChange={(e) => setHours(Math.max(1, Number(e.target.value) || 1))}
+                />
+              </label>
+            )}
+          </div>
+          <div className="form__actions">
+            <button type="button" className="btn btn--ghost" onClick={() => setAdding(false)}>
+              Cancel
+            </button>
+            <button className="btn btn--primary" type="submit">
+              Add recurring task
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="form__actions">
+          {!hasTidyUp && (
+            <button type="button" className="btn btn--ghost btn--sm" onClick={addTidyUp} title="Every Sunday at 20:00">
+              🧹 Weekly notes tidy-up
+            </button>
+          )}
+          <span className="spacer" />
+          <button type="button" className="btn btn--primary btn--sm" onClick={() => setAdding(true)}>
+            ＋ Recurring task
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ScheduleRow({ schedule }: { schedule: Schedule }) {
+  const showToast = useStore((s) => s.showToast);
+  const toggle = () => api("PATCH", `/api/schedules/${schedule.id}`, { enabled: !schedule.enabled });
+  const runNow = async () => {
+    await api("POST", `/api/schedules/${schedule.id}/run`);
+    showToast(`Started "${schedule.title}".`);
+  };
+  const remove = async () => {
+    if (!confirm(`Remove the recurring task "${schedule.title}"?`)) return;
+    await api("DELETE", `/api/schedules/${schedule.id}`);
+  };
+  return (
+    <li className={`schedule${schedule.enabled ? "" : " schedule--paused"}`}>
+      <div className="schedule__text">
+        <strong>{schedule.title}</strong>
+        <small>
+          {describeCadence(schedule.cadence)} ·{" "}
+          {schedule.enabled ? `next ${formatWhen(schedule.nextRunAt)}` : "paused"}
+          {schedule.lastRunAt ? ` · last ${formatWhen(schedule.lastRunAt)}` : ""}
+        </small>
+      </div>
+      <div className="schedule__actions">
+        <button type="button" className="btn btn--ghost btn--sm" onClick={runNow} title="Start it now">
+          ▶
+        </button>
+        <button type="button" className="btn btn--ghost btn--sm" onClick={toggle}>
+          {schedule.enabled ? "Pause" : "Resume"}
+        </button>
+        <button type="button" className="btn btn--ghost btn--danger btn--sm" onClick={remove} aria-label="Remove">
+          ✕
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function formatWhen(at: number) {
+  return new Date(at).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 function DriveModal() {

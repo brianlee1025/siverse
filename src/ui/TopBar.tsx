@@ -32,7 +32,13 @@ export function TopBar({ snapshot }: { snapshot: Snapshot }) {
         <span className="topbar__logo">🏢</span>
         <div>
           <strong>{snapshot.settings.companyName}</strong>
-          <small>{aiOffice ? "Siverse office" : "Watching Claude Code"}</small>
+          <small>
+            {aiOffice
+              ? snapshot.settings.engine === "claude-code"
+                ? "Siverse office · on your Claude plan"
+                : "Siverse office"
+              : "Watching Claude Code"}
+          </small>
         </div>
       </div>
       <div className="topbar__stats">
@@ -67,7 +73,7 @@ export function TopBar({ snapshot }: { snapshot: Snapshot }) {
           </button>
         )}
         <button
-          className={`btn btn--ghost${aiOffice && !snapshot.settings.apiKeySource ? " btn--attention" : ""}`}
+          className={`btn btn--ghost${aiOffice && !snapshot.settings.ready ? " btn--attention" : ""}`}
           onClick={() => openModal({ type: "settings" })}
         >
           ⚙️ <span className="hide-sm">Settings</span>

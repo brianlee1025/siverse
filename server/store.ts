@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { ChatMessage, ChatRole, Department, FeedItem, Snapshot, Task } from "../shared/types";
+import type { ChatMessage, ChatRole, Department, FeedItem, Schedule, Snapshot, Task } from "../shared/types";
 import { isClaudeCode } from "../shared/types";
 import { isInstalled as claudeCodeHooksInstalled } from "./claudeCodeHooks";
 import { DATA_DIR, MAX_CONCURRENT_WORKERS } from "./config";
@@ -10,6 +10,7 @@ import { settingsView } from "./settings";
 interface PersistedState {
   departments: Department[];
   tasks: Task[];
+  schedules: Schedule[];
   chat: ChatMessage[];
 }
 
@@ -17,7 +18,7 @@ const STATE_FILE = path.join(DATA_DIR, "state.json");
 const SNAPSHOT_FINISHED_TASKS = 60;
 const SNAPSHOT_CHAT = 200;
 
-export const state: PersistedState = { departments: [], tasks: [], chat: [] };
+export const state: PersistedState = { departments: [], tasks: [], schedules: [], chat: [] };
 export const managerStatus = { busy: false, activity: null as string | null };
 
 // What your Claude Code sessions are doing. Kept in memory only: it mirrors live sessions,
@@ -41,6 +42,7 @@ export function loadState() {
   } catch {
     return; // First run.
   }
+  state.schedules ??= []; // Saved before schedules existed.
   // Anything mid-flight when the server stopped can't be resumed.
   for (const task of state.tasks) {
     if (task.status === "working") {
@@ -93,6 +95,7 @@ export function snapshot(): Snapshot {
     settings: settingsView(),
     departments: state.departments,
     tasks: [...finished, ...active],
+    schedules: state.schedules,
     chat: state.chat.slice(-SNAPSHOT_CHAT),
     manager: { ...managerStatus },
     maxConcurrentWorkers: MAX_CONCURRENT_WORKERS,
