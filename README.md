@@ -4,8 +4,8 @@
 
 Siverse has two modes, and they share one office:
 
-- **⚡ Watch Claude Code** works with a Claude Pro or Max plan, no API key needed. Keep using Claude Code as usual; Siverse shows it as an office. Each project gets a zone, Claude sits at a desk with a speech bubble of what it's doing ("📖 Reading checkout.test.ts", "⌨️ Run the test suite"), and every subagent it launches walks in as another worker and leaves when it's done.
-- **🏢 Run your own AI office** needs a Claude API key. You chat with your office manager, who opens departments and hands out tasks. For every task that runs, a worker walks in, does the work for real, and saves the results as files on the company drive. The manager and each department keep notes between sessions, so the office gets to know you.
+- **⚡ Watch Claude Code** (the default) works with a Claude Pro or Max plan, no API key needed. Keep using Claude Code as usual; Siverse shows it as an office. Each project gets a zone, Claude sits at a desk with a speech bubble of what it's doing ("📖 Reading checkout.test.ts", "⌨️ Run the test suite"), and every subagent it launches walks in as another worker and leaves when it's done.
+- **🏢 Run your own AI office** is optional and off until you turn it on in Settings. It needs a Claude API key. You chat with your office manager, who opens departments and hands out tasks. For every task that runs, a worker walks in, does the work for real, and saves the results as files on the company drive. The manager and each department keep notes between sessions, so the office gets to know you.
 
 ```
  Claude Code ──hooks──► Siverse ──► project zones, Claude at a desk, subagents as workers
@@ -39,7 +39,9 @@ How it works: connecting adds [hooks](https://code.claude.com/docs/en/hooks) to 
 
 ### Run your own AI office (API key)
 
-This mode calls the Claude API, which is billed separately from Claude Pro/Max plans. Create a key at [console.anthropic.com](https://console.anthropic.com/settings/keys) and paste it into **Settings**, or put `ANTHROPIC_API_KEY=...` in a `.env` file (see `.env.example`). Then try telling the manager something like:
+This mode calls the Claude API, which is billed separately from Claude Pro/Max plans. Open **Settings**, switch on **AI office**, and paste a key from [console.anthropic.com](https://console.anthropic.com/settings/keys), or put `ANTHROPIC_API_KEY=...` in a `.env` file (see `.env.example`). The manager, the Manager chat tab, departments and the Drive then appear. Switch it off again to go back to just watching Claude Code. Your departments and files are kept.
+
+Then try telling the manager something like:
 
 > Set up Marketing, Research and Engineering departments for a coffee subscription startup, then have Marketing write a launch announcement.
 
@@ -49,7 +51,7 @@ This mode calls the Claude API, which is billed separately from Claude Pro/Max p
 npm run demo
 ```
 
-In demo mode the office's own workers act out tasks and save placeholder files without calling the API. Use it to look around, or to work on the 3D scene and UI. The manager still needs a key, so create departments and tasks from the UI: click a department, then use **Hand them a task directly**.
+Demo mode switches the AI office on, and its workers act out tasks and save placeholder files without calling the API. Use it to look around, or to work on the 3D scene and UI. The manager still needs a key, so create departments and tasks from the UI: click a department, then use **Hand them a task directly**.
 
 ## How it works
 

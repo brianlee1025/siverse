@@ -1,4 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import type { Snapshot } from "../shared/types";
+import { isClaudeCode } from "../shared/types";
 import { OfficeScene } from "./scene/OfficeScene";
 import { useStore } from "./store";
 import { ChatPanel } from "./ui/ChatPanel";
@@ -8,7 +10,8 @@ import { TaskDetail } from "./ui/TaskDetail";
 import { TopBar } from "./ui/TopBar";
 
 export function App() {
-  const snapshot = useStore((s) => s.snapshot);
+  const raw = useStore((s) => s.snapshot);
+  const snapshot = useMemo(() => raw && visibleSnapshot(raw), [raw]);
   const chatOpen = useStore((s) => s.chatOpen);
   const boardOpen = useStore((s) => s.boardOpen);
   const openModal = useStore((s) => s.openModal);
@@ -18,7 +21,7 @@ export function App() {
   useEffect(() => {
     if (!snapshot || checkedKey.current) return;
     checkedKey.current = true;
-    if (snapshot.settings.apiKeySource) return;
+    if (!snapshot.settings.aiOffice || snapshot.settings.apiKeySource) return;
     try {
       if (localStorage.getItem("siverse.promptedForKey")) return;
       localStorage.setItem("siverse.promptedForKey", "1");
@@ -53,6 +56,16 @@ export function App() {
       <Toast />
     </div>
   );
+}
+
+/** With the AI office off, the office shows only what Claude Code is doing. */
+function visibleSnapshot(snapshot: Snapshot): Snapshot {
+  if (snapshot.settings.aiOffice) return snapshot;
+  return {
+    ...snapshot,
+    departments: snapshot.departments.filter(isClaudeCode),
+    tasks: snapshot.tasks.filter(isClaudeCode),
+  };
 }
 
 function Toast() {

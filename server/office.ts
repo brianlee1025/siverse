@@ -1,10 +1,10 @@
 import type { Department, Task } from "../shared/types";
 import { MAX_HEADCOUNT, isClaudeCode } from "../shared/types";
-import { MAX_CONCURRENT_WORKERS } from "./config";
+import { DEMO_MODE, MAX_CONCURRENT_WORKERS } from "./config";
 import { explainError } from "./claude";
-import { DEMO_MODE, runDemoWorker } from "./demo";
+import { runDemoWorker } from "./demo";
 import { pickWorkerName } from "./names";
-import { getClient } from "./settings";
+import { aiOfficeEnabled, getClient } from "./settings";
 import { addChat, changed, findDepartment, newId, nextDepartmentColor, slugify, state } from "./store";
 import { runWorker } from "./worker";
 
@@ -122,7 +122,7 @@ function finish(task: Task, status: Task["status"], fields: Partial<Task> = {}) 
 
 /** Starts queued tasks, oldest first, while departments have free desks. */
 export function schedule() {
-  if (!getClient() && !DEMO_MODE) return;
+  if (!aiOfficeEnabled() || (!getClient() && !DEMO_MODE)) return;
   for (const task of state.tasks) {
     if (running.size >= MAX_CONCURRENT_WORKERS) return;
     if (task.status !== "queued") continue;

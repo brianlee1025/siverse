@@ -16,6 +16,8 @@ export function TopBar({ snapshot }: { snapshot: Snapshot }) {
   const queued = officeTasks.filter((t) => t.status === "queued").length;
   const done = officeTasks.filter((t) => t.status === "done").length;
   const live = claudeCodeIsLive(snapshot);
+  const { aiOffice } = snapshot.settings;
+  const liveTasks = snapshot.tasks.filter((t) => isClaudeCode(t) && t.status === "working");
   const openClaudeCode = () => {
     setChatTab("claude-code");
     setChatOpen(true);
@@ -30,14 +32,24 @@ export function TopBar({ snapshot }: { snapshot: Snapshot }) {
         <span className="topbar__logo">🏢</span>
         <div>
           <strong>{snapshot.settings.companyName}</strong>
-          <small>Siverse office</small>
+          <small>{aiOffice ? "Siverse office" : "Watching Claude Code"}</small>
         </div>
       </div>
       <div className="topbar__stats">
-        <Stat label="departments" value={snapshot.departments.filter((d) => !isClaudeCode(d)).length} />
-        <Stat label="working" value={`${working}/${snapshot.maxConcurrentWorkers}`} />
-        <Stat label="queued" value={queued} />
-        <Stat label="done" value={done} />
+        {aiOffice ? (
+          <>
+            <Stat label="departments" value={snapshot.departments.filter((d) => !isClaudeCode(d)).length} />
+            <Stat label="working" value={`${working}/${snapshot.maxConcurrentWorkers}`} />
+            <Stat label="queued" value={queued} />
+            <Stat label="done" value={done} />
+          </>
+        ) : (
+          <>
+            <Stat label="projects" value={snapshot.departments.length} />
+            <Stat label="sessions" value={liveTasks.filter((t) => t.kind === "session").length} />
+            <Stat label="subagents" value={liveTasks.filter((t) => t.kind === "subagent").length} />
+          </>
+        )}
       </div>
       <div className="topbar__actions">
         {!connected && <span className="pill pill--warn">Reconnecting…</span>}
@@ -49,11 +61,13 @@ export function TopBar({ snapshot }: { snapshot: Snapshot }) {
           <span className={`live-dot${live ? " live-dot--on" : ""}`} />
           <span className="hide-sm">Claude Code</span>
         </button>
-        <button className="btn btn--ghost" onClick={() => openModal({ type: "drive" })}>
-          📁 <span className="hide-sm">Drive</span>
-        </button>
+        {aiOffice && (
+          <button className="btn btn--ghost" onClick={() => openModal({ type: "drive" })}>
+            📁 <span className="hide-sm">Drive</span>
+          </button>
+        )}
         <button
-          className={`btn btn--ghost${snapshot.settings.apiKeySource ? "" : " btn--attention"}`}
+          className={`btn btn--ghost${aiOffice && !snapshot.settings.apiKeySource ? " btn--attention" : ""}`}
           onClick={() => openModal({ type: "settings" })}
         >
           ⚙️ <span className="hide-sm">Settings</span>

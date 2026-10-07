@@ -33,11 +33,24 @@ export function OfficeScene({ snapshot }: { snapshot: Snapshot }) {
       />
       <CameraRig layout={layout} />
       <Room layout={layout} />
-      <BossOffice zone={layout.boss} busy={snapshot.manager.busy} activity={snapshot.manager.activity} />
+      <BossOffice
+        zone={layout.boss}
+        showManager={snapshot.settings.aiOffice}
+        busy={snapshot.manager.busy}
+        activity={snapshot.manager.activity}
+      />
       {snapshot.departments.map((department) => (
         <DepartmentZone key={department.id} department={department} layout={layout} tasks={snapshot.tasks} />
       ))}
-      {layout.placeholder && <PlaceholderZone zone={layout.placeholder} empty={!snapshot.departments.length} />}
+      {layout.placeholder &&
+        (snapshot.settings.aiOffice ? (
+          <PlaceholderZone zone={layout.placeholder} empty={!snapshot.departments.length} />
+        ) : (
+          <ClaudeCodePlaceholder
+            zone={layout.placeholder}
+            connected={snapshot.claudeCode.hooksInstalled || snapshot.claudeCode.lastEventAt !== null}
+          />
+        ))}
       <Workers snapshot={snapshot} layout={layout} />
     </Canvas>
   );
@@ -146,7 +159,17 @@ function Rug({ zone, color, opacity = 1, onClick }: { zone: Zone; color: string;
   );
 }
 
-function BossOffice({ zone, busy, activity }: { zone: Zone; busy: boolean; activity: string | null }) {
+function BossOffice({
+  zone,
+  showManager,
+  busy,
+  activity,
+}: {
+  zone: Zone;
+  showManager: boolean;
+  busy: boolean;
+  activity: string | null;
+}) {
   const bossMotion = useRef<Motion>({ walking: false, sitting: true, typing: false });
   const managerMotion = useRef<Motion>({ walking: false, sitting: false, typing: false });
   const [cx, cz] = zone.center;
@@ -183,15 +206,17 @@ function BossOffice({ zone, busy, activity }: { zone: Zone; busy: boolean; activ
         </Html>
       </group>
       {/* The manager stands beside the desk; their bubble shows what they're doing right now. */}
-      <group position={[cx + 1.5, 0, cz + 0.4]} rotation={[0, -0.6, 0]}>
-        <Person shirt="#5b8c85" skin="#c68863" hair="#121212" longHair motion={managerMotion} />
-        <Html position={[0, 2.1, 0]} center distanceFactor={14} zIndexRange={[30, 0]}>
-          <div className="bubble bubble--manager" onClick={() => openChat(true)}>
-            <span className="bubble__name">Manager</span>
-            <span className="bubble__text">{busy ? (activity ?? "Thinking…") : "Ready for orders"}</span>
-          </div>
-        </Html>
-      </group>
+      {showManager && (
+        <group position={[cx + 1.5, 0, cz + 0.4]} rotation={[0, -0.6, 0]}>
+          <Person shirt="#5b8c85" skin="#c68863" hair="#121212" longHair motion={managerMotion} />
+          <Html position={[0, 2.1, 0]} center distanceFactor={14} zIndexRange={[30, 0]}>
+            <div className="bubble bubble--manager" onClick={() => openChat(true)}>
+              <span className="bubble__name">Manager</span>
+              <span className="bubble__text">{busy ? (activity ?? "Thinking…") : "Ready for orders"}</span>
+            </div>
+          </Html>
+        </group>
+      )}
     </group>
   );
 }
@@ -247,6 +272,25 @@ function PlaceholderZone({ zone, empty }: { zone: Zone; empty: boolean }) {
       <Html position={[zone.center[0], 0.6, zone.center[1]]} center distanceFactor={16} zIndexRange={[20, 0]}>
         <button className="zone-placeholder" onClick={() => openModal({ type: "department", departmentId: null })}>
           {empty ? "＋ Open your first department" : "＋ New department"}
+        </button>
+      </Html>
+    </group>
+  );
+}
+
+function ClaudeCodePlaceholder({ zone, connected }: { zone: Zone; connected: boolean }) {
+  const setChatTab = useStore((s) => s.setChatTab);
+  const setChatOpen = useStore((s) => s.setChatOpen);
+  const open = () => {
+    setChatTab("claude-code");
+    setChatOpen(true);
+  };
+  return (
+    <group>
+      <Rug zone={zone} color="#ffffff" opacity={0.35} onClick={open} />
+      <Html position={[zone.center[0], 0.6, zone.center[1]]} center distanceFactor={16} zIndexRange={[20, 0]}>
+        <button className="zone-placeholder" onClick={open}>
+          {connected ? "⚡ Next Claude Code project goes here" : "⚡ Connect Claude Code"}
         </button>
       </Html>
     </group>

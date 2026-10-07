@@ -2,10 +2,8 @@ import type { Department, Task } from "../shared/types";
 import { writeDepartmentFile } from "./drive";
 import { changed } from "./store";
 
-// Demo mode (SIVERSE_DEMO=1): workers act out a task without calling the Claude API, so you can
-// work on the office scene and UI without an API key or spending anything.
-
-export const DEMO_MODE = process.env.SIVERSE_DEMO === "1";
+// Demo mode (SIVERSE_DEMO=1, see config.ts): workers act out a task without calling the Claude API,
+// so you can work on the office scene and UI without an API key or spending anything.
 
 const STEPS = [
   "🧠 Checking the department notes",

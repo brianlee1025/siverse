@@ -13,6 +13,7 @@ const STATUS_LABEL: Record<Task["status"], string> = {
 export function TaskBoard({ snapshot }: { snapshot: Snapshot }) {
   const openModal = useStore((s) => s.openModal);
   const setBoardOpen = useStore((s) => s.setBoardOpen);
+  const aiOffice = snapshot.settings.aiOffice;
   const departments = new Map(snapshot.departments.map((d) => [d.id, d]));
   const officeDepartments = snapshot.departments.filter((d) => !isClaudeCode(d));
   const officeTasks = snapshot.tasks.filter((t) => !isClaudeCode(t));
@@ -27,18 +28,26 @@ export function TaskBoard({ snapshot }: { snapshot: Snapshot }) {
   return (
     <aside className="board" aria-label="Departments and tasks">
       <header className="panel-header">
-        <strong>Departments</strong>
+        <strong>{aiOffice ? "Departments" : "Claude Code"}</strong>
         <div className="panel-header__actions">
-          <button className="btn btn--ghost btn--sm" onClick={() => openModal({ type: "department", departmentId: null })}>
-            ＋ New
-          </button>
+          {aiOffice && (
+            <button className="btn btn--ghost btn--sm" onClick={() => openModal({ type: "department", departmentId: null })}>
+              ＋ New
+            </button>
+          )}
           <button className="icon-btn hide-lg" onClick={() => setBoardOpen(false)} aria-label="Close board">
             ✕
           </button>
         </div>
       </header>
       <div className="board__scroll">
-        {officeDepartments.length === 0 ? (
+        {!aiOffice ? (
+          claudeCodeLive.length === 0 && (
+            <p className="muted board__empty">
+              Nothing running right now. Your Claude Code sessions and their subagents show up here while they work.
+            </p>
+          )
+        ) : officeDepartments.length === 0 ? (
           <p className="muted board__empty">No departments yet. Ask the manager to open one, or add it yourself.</p>
         ) : (
           <ul className="dept-list">

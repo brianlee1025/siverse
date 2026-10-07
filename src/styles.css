@@ -1043,6 +1043,25 @@ code {
 .form .checkbox input {
   width: auto;
 }
+.form .toggle {
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.form .toggle input {
+  margin-top: 3px;
+}
+.form .toggle span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.form .toggle small {
+  color: var(--ink-2);
+  font-weight: 400;
+  line-height: 1.45;
+}
 .form__actions {
   display: flex;
   gap: 8px;

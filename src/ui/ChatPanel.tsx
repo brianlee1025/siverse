@@ -17,7 +17,9 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
   const connected = useStore((s) => s.connected);
   const openModal = useStore((s) => s.openModal);
   const setChatOpen = useStore((s) => s.setChatOpen);
-  const tab = useStore((s) => s.chatTab);
+  const aiOffice = snapshot.settings.aiOffice;
+  const selectedTab = useStore((s) => s.chatTab);
+  const tab = aiOffice ? selectedTab : "claude-code";
   const setTab = useStore((s) => s.setChatTab);
   const list = useRef<HTMLDivElement>(null);
   const { busy, activity } = snapshot.manager;
@@ -118,15 +120,25 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
   return (
     <aside className="chat" aria-label="Chat with your manager">
       <header className="panel-header">
-        <div className="tabs" role="tablist">
-          <button role="tab" aria-selected={tab === "manager"} className="tab" onClick={() => setTab("manager")}>
-            Manager
-          </button>
-          <button role="tab" aria-selected={tab === "claude-code"} className="tab" onClick={() => setTab("claude-code")}>
-            <span className={`live-dot${claudeCodeIsLive(snapshot) ? " live-dot--on" : ""}`} />
-            Claude Code
-          </button>
-        </div>
+        {aiOffice ? (
+          <div className="tabs" role="tablist">
+            <button role="tab" aria-selected={tab === "manager"} className="tab" onClick={() => setTab("manager")}>
+              Manager
+            </button>
+            <button role="tab" aria-selected={tab === "claude-code"} className="tab" onClick={() => setTab("claude-code")}>
+              <span className={`live-dot${claudeCodeIsLive(snapshot) ? " live-dot--on" : ""}`} />
+              Claude Code
+            </button>
+          </div>
+        ) : (
+          <div className="chat__who">
+            <span className="avatar avatar--claude">C</span>
+            <div>
+              <strong>Claude Code</strong>
+              <small>{claudeCodeIsLive(snapshot) ? "live" : "waiting for a session"}</small>
+            </div>
+          </div>
+        )}
         <div className="panel-header__actions">
           {tab === "manager" && (
             <button className="btn btn--ghost btn--sm" onClick={newDay} disabled={busy} title="Clear the conversation">

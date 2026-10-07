@@ -24,6 +24,9 @@ export const PORT = Number(process.env.PORT ?? 8787);
 export const HOST = process.env.HOST ?? "127.0.0.1";
 export const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
+// Demo mode (SIVERSE_DEMO=1): the AI office's workers act out tasks without calling the API.
+export const DEMO_MODE = process.env.SIVERSE_DEMO === "1";
+
 export const MAX_CONCURRENT_WORKERS = Math.max(1, Number(process.env.MAX_CONCURRENT_WORKERS ?? 4));
 
 export const DEFAULT_MODEL = "claude-opus-5-5";

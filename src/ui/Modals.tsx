@@ -62,6 +62,7 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
   const openModal = useStore((s) => s.openModal);
   const showToast = useStore((s) => s.showToast);
   const [companyName, setCompanyName] = useState(settings.companyName);
+  const [aiOffice, setAiOffice] = useState(settings.aiOffice);
   const [apiKey, setApiKey] = useState("");
   const [managerModel, setManagerModel] = useState(settings.managerModel);
   const [workerModel, setWorkerModel] = useState(settings.workerModel);
@@ -70,6 +71,7 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
     e.preventDefault();
     await api("PUT", "/api/settings", {
       companyName,
+      aiOffice,
       managerModel,
       workerModel,
       ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
@@ -91,54 +93,69 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
           <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} maxLength={60} />
         </label>
 
-        <fieldset>
-          <legend>Claude API key</legend>
-          {settings.apiKeySource === "env" && (
-            <p className="hint ok">Using ANTHROPIC_API_KEY from the server environment (ends in …{settings.apiKeyHint}).</p>
-          )}
-          {settings.apiKeySource === "settings" && (
-            <p className="hint ok">
-              A key ending in …{settings.apiKeyHint} is saved.{" "}
-              <button type="button" className="link" onClick={removeKey}>
-                Remove it
-              </button>
-            </p>
-          )}
-          {!settings.apiKeySource && (
-            <p className="hint">
-              The office needs a Claude API key to run. Create one at{" "}
-              <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">
-                console.anthropic.com
-              </a>
-              . Usage is billed to your Anthropic account.
-            </p>
-          )}
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={settings.apiKeySource ? "Paste a new key to replace it" : "sk-ant-…"}
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <p className="hint tiny">
-            Stored only on this computer in <code>data/settings.json</code>. It is never sent back to the browser.
-          </p>
-        </fieldset>
+        <label className="checkbox toggle">
+          <input type="checkbox" checked={aiOffice} onChange={(e) => setAiOffice(e.target.checked)} />
+          <span>
+            <strong>AI office</strong>
+            <small>
+              Siverse's own manager and workers, who take orders in the chat and do real work. Uses the Claude API,
+              which is billed separately from Claude Pro/Max plans. Watching Claude Code doesn't need this.
+            </small>
+          </span>
+        </label>
 
-        <div className="form__row">
-          <label>
-            Manager model
-            <ModelSelect value={managerModel} onChange={setManagerModel} />
-          </label>
-          <label>
-            Worker model
-            <ModelSelect value={workerModel} onChange={setWorkerModel} />
-          </label>
-        </div>
-        <p className="hint tiny">
-          Every running worker is its own stream of API calls. A cheaper worker model lowers the cost of a busy office.
-        </p>
+        {aiOffice && (
+          <>
+            <fieldset>
+              <legend>Claude API key</legend>
+              {settings.apiKeySource === "env" && (
+                <p className="hint ok">Using ANTHROPIC_API_KEY from the server environment (ends in …{settings.apiKeyHint}).</p>
+              )}
+              {settings.apiKeySource === "settings" && (
+                <p className="hint ok">
+                  A key ending in …{settings.apiKeyHint} is saved.{" "}
+                  <button type="button" className="link" onClick={removeKey}>
+                    Remove it
+                  </button>
+                </p>
+              )}
+              {!settings.apiKeySource && (
+                <p className="hint">
+                  The office needs a Claude API key to run. Create one at{" "}
+                  <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">
+                    console.anthropic.com
+                  </a>
+                  . Usage is billed to your Anthropic account.
+                </p>
+              )}
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={settings.apiKeySource ? "Paste a new key to replace it" : "sk-ant-…"}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <p className="hint tiny">
+                Stored only on this computer in <code>data/settings.json</code>. It is never sent back to the browser.
+              </p>
+            </fieldset>
+
+            <div className="form__row">
+              <label>
+                Manager model
+                <ModelSelect value={managerModel} onChange={setManagerModel} />
+              </label>
+              <label>
+                Worker model
+                <ModelSelect value={workerModel} onChange={setWorkerModel} />
+              </label>
+            </div>
+            <p className="hint tiny">
+              Every running worker is its own stream of API calls. A cheaper worker model lowers the cost of a busy office.
+            </p>
+          </>
+        )}
 
         <div className="form__actions">
           <button type="button" className="btn btn--ghost" onClick={() => openModal(null)}>

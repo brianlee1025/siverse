@@ -61,6 +61,7 @@ export interface ChatMessage {
 
 export interface SettingsView {
   companyName: string;
+  aiOffice: boolean; // Siverse's own API-powered manager and workers are switched on
   apiKeySource: "env" | "settings" | null;
   apiKeyHint: string | null; // last 4 characters, never the key itself
   managerModel: string;
