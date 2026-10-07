@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.local
+
+# Local company data: settings (may hold your API key), chat history, memory, work output
+data/
+workspace/
+
+.DS_Store
+*.log
