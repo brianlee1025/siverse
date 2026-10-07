@@ -2,9 +2,14 @@
 
 **A 3D office simulator where you are the boss and Claude does the work.**
 
-You chat with your office manager. The manager opens departments and hands out tasks. For every task that runs, a worker walks in, sits at a desk in that department and does the work for real. The results are files on the company drive that you can open and read. The manager and each department keep notes between sessions, so the office gets to know you.
+Siverse has two modes, and they share one office:
+
+- **⚡ Watch Claude Code** works with a Claude Pro or Max plan, no API key needed. Keep using Claude Code as usual; Siverse shows it as an office. Each project gets a zone, Claude sits at a desk with a speech bubble of what it's doing ("📖 Reading checkout.test.ts", "⌨️ Run the test suite"), and every subagent it launches walks in as another worker and leaves when it's done.
+- **🏢 Run your own AI office** needs a Claude API key. You chat with your office manager, who opens departments and hands out tasks. For every task that runs, a worker walks in, does the work for real, and saves the results as files on the company drive. The manager and each department keep notes between sessions, so the office gets to know you.
 
 ```
+ Claude Code ──hooks──► Siverse ──► project zones, Claude at a desk, subagents as workers
+
  You (the boss) ──chat──► Manager ──creates──► Departments (Marketing, Research, Engineering…)
                              │
                              └──assigns──► Tasks ──► one Worker per running task ──► files on the drive
@@ -12,16 +17,29 @@ You chat with your office manager. The manager opens departments and hands out t
 
 ## Quick start
 
-You need Node.js 20.12+ and a [Claude API key](https://console.anthropic.com/settings/keys).
+You need Node.js 20.12+.
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open <http://localhost:5173>. The first time, Settings opens so you can paste your API key. You can also put `ANTHROPIC_API_KEY=...` in a `.env` file (see `.env.example`).
+Open <http://localhost:5173>.
 
-Then try telling the manager something like:
+### Watch Claude Code (Pro/Max plan)
+
+1. Click **Claude Code** in the top bar, then **⚡ Connect Claude Code**. Or run `npm run cc:connect` in a terminal.
+2. Start a **new** Claude Code session (or restart open ones) and give it a task.
+3. Watch it show up in the office. The **Claude Code** chat tab mirrors your prompts and Claude's replies.
+
+How it works: connecting adds [hooks](https://code.claude.com/docs/en/hooks) to `~/.claude/settings.json`. On each event (session start, prompt, tool call, subagent start/stop, reply), Claude Code runs a background `curl` that posts the event to Siverse on `127.0.0.1`. **Siverse never calls Claude, never sees your login, and never sends input to Claude Code.** Claude Code runs exactly as before, on your own plan. The hooks run in the background and always succeed, so Claude Code isn't slowed down and doesn't complain when Siverse isn't running.
+
+- `npm run cc:connect -- --project ../my-app` connects one project only (its `.claude/settings.local.json`).
+- `npm run cc:disconnect` removes the hooks again. Siverse only ever touches its own entries and keeps a `.siverse-backup` of the file.
+
+### Run your own AI office (API key)
+
+This mode calls the Claude API, which is billed separately from Claude Pro/Max plans. Create a key at [console.anthropic.com](https://console.anthropic.com/settings/keys) and paste it into **Settings**, or put `ANTHROPIC_API_KEY=...` in a `.env` file (see `.env.example`). Then try telling the manager something like:
 
 > Set up Marketing, Research and Engineering departments for a coffee subscription startup, then have Marketing write a launch announcement.
 
@@ -31,7 +49,7 @@ Then try telling the manager something like:
 npm run demo
 ```
 
-In demo mode workers act out tasks and save placeholder files without calling the API. Use it to look around, or to work on the 3D scene and UI. The manager still needs a key, so create departments and tasks from the UI: click a department, then use **Hand them a task directly**.
+In demo mode the office's own workers act out tasks and save placeholder files without calling the API. Use it to look around, or to work on the 3D scene and UI. The manager still needs a key, so create departments and tasks from the UI: click a department, then use **Hand them a task directly**.
 
 ## How it works
 
@@ -42,6 +60,8 @@ In demo mode workers act out tasks and save placeholder files without calling th
 | **Workers** | One Claude agent loop per running task (`server/worker.ts`). It can read the company drive, write deliverables into its department's folder, keep department notes and, if allowed, search and read the web. Its last message becomes the task summary. |
 | **Scheduler** | Starts queued tasks, oldest first, while the department has a free desk and the office is under `MAX_CONCURRENT_WORKERS` (`server/office.ts`). |
 | **3D office** | React Three Fiber (`src/scene`). Every person and piece of furniture is built from primitive shapes, so there are no asset files. Workers walk in from the door, type at their desks, show their latest progress note in a speech bubble, and walk out when they finish. |
+
+| **Claude Code bridge** | `server/claudeCode.ts` turns hook events into the office. A project folder becomes a zone, a session becomes a worker named Claude, and an event carrying an `agent_id` belongs to that subagent's own worker. Sessions with no events for 45 minutes go home. All of this lives in memory and is never saved to disk. |
 
 The server is the source of truth. It pushes a full snapshot over a WebSocket whenever something changes, and the browser just renders it.
 
@@ -64,6 +84,7 @@ Requests use adaptive thinking with progress updates (`display: "updates"`), whi
 - **Local only.** The server listens on `127.0.0.1` and rejects requests whose `Host` or `Origin` isn't localhost. Other websites can't drive your office or spend your credits. Don't expose it to a network without adding authentication.
 - **Your key stays on your machine.** A key pasted into Settings is saved to `data/settings.json` with `0600` permissions and is never sent back to the browser.
 - **Sandboxed files.** Workers can only write inside their own department folder under `workspace/`, and can only read inside `workspace/`. Paths that try to escape are rejected.
+- **Claude Code mode is read-only.** Siverse only receives what Claude Code's hooks send. It keeps short descriptions (for example "Editing app.ts", not file contents) and a feed of recent prompts and replies, in memory only.
 - `data/` and `workspace/` are git-ignored.
 
 ## Configuration
@@ -82,6 +103,8 @@ Requests use adaptive thinking with progress updates (`display: "updates"`), whi
 | --- | --- |
 | `npm run dev` | Server + Vite with hot reload |
 | `npm run demo` | Same, in demo mode |
+| `npm run cc:connect` | Add Siverse's hooks to Claude Code (`-- --project <dir>` for one project) |
+| `npm run cc:disconnect` | Remove them |
 | `npm run build` | Typecheck and build the frontend into `dist/` |
 | `npm start` | Serve the built app and API from one port (`http://localhost:8787`) |
 
@@ -98,6 +121,10 @@ server/
   claude.ts     per-model request settings, helpers
   store.ts      state, persistence, change notifications
   security.ts   localhost-only guard
+  claudeCode.ts       Claude Code events → office
+  claudeCodeHooks.ts  add/remove hooks in Claude Code settings
+scripts/
+  claude-code.ts  cc:connect / cc:disconnect
 src/
   scene/        3D office: layout, people, furniture, workers
   ui/           chat, task board, task details, modals
@@ -108,7 +135,7 @@ shared/types.ts types used by both sides
 
 - Workers handing work to other departments, and meetings between departments
 - A code-execution sandbox for Engineering
-- An MCP server, so Claude Code or Claude Desktop can run the office
+- Show Claude Code's to-do list and permission prompts more visibly in the office (a raised hand, a whiteboard)
 - Cost dashboard and per-department budgets
 - Nicer characters (GLTF), sounds, day/night cycle
 

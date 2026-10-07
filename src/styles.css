@@ -591,6 +591,72 @@ code {
   }
 }
 
+.tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--panel-2);
+  border-radius: 10px;
+  padding: 3px;
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.tab[aria-selected="true"] {
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(35, 38, 45, 0.1);
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c4bfb6;
+  flex: none;
+}
+.live-dot--on {
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 25%, transparent);
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--success) 10%, transparent);
+  }
+}
+.cc-pill--live {
+  color: var(--success);
+}
+.avatar--claude {
+  background: #d97757;
+}
+.msg__project {
+  display: block;
+  font-size: 11px;
+  font-weight: 650;
+  opacity: 0.7;
+  margin-bottom: 2px;
+}
+.chat__hint {
+  margin: 0;
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.chat__welcome .btn {
+  margin-top: 4px;
+}
+
 .chat__keyline {
   margin: 0 14px 8px;
   border: 1px dashed var(--warn);
@@ -901,6 +967,9 @@ code {
 .modal__body {
   padding: 8px 22px 22px;
   overflow-y: auto;
+}
+.modal__body h4 {
+  margin: 16px 0 8px;
 }
 
 .form {

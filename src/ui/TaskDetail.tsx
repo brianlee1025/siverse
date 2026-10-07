@@ -1,5 +1,6 @@
 import Markdown from "react-markdown";
 import type { Snapshot } from "../../shared/types";
+import { isClaudeCode } from "../../shared/types";
 import { api, useStore } from "../store";
 import { STATUS_LABEL } from "./TaskBoard";
 
@@ -10,7 +11,8 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
   const task = snapshot.tasks.find((t) => t.id === selectedTaskId);
   if (!task) return null;
   const department = snapshot.departments.find((d) => d.id === task.departmentId);
-  const active = task.status === "working" || task.status === "queued";
+  const fromClaudeCode = isClaudeCode(task);
+  const active = !fromClaudeCode && (task.status === "working" || task.status === "queued");
 
   const cancel = () => api("POST", `/api/tasks/${task.id}/cancel`);
   const retry = async () => {
@@ -28,16 +30,24 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
           </small>
           <h3>{task.title}</h3>
         </div>
-        <span className={`pill pill--${task.status}`}>{STATUS_LABEL[task.status]}</span>
+        <span className={`pill pill--${task.status}`}>
+          {fromClaudeCode && task.status === "working" ? "Live" : STATUS_LABEL[task.status]}
+        </span>
         <button className="icon-btn" onClick={() => selectTask(null)} aria-label="Close task details">
           ✕
         </button>
       </header>
 
       <div className="task-detail__body">
+        {fromClaudeCode && (
+          <p className="muted tiny">
+            ⚡ {task.kind === "subagent" ? "A subagent" : "A session"} in your Claude Code
+            {department?.projectPath ? <> · <code>{department.projectPath}</code></> : null}
+          </p>
+        )}
         {task.summary && (
           <section>
-            <h4>Summary</h4>
+            <h4>{fromClaudeCode ? "Latest reply" : "Summary"}</h4>
             <div className="prose">
               <Markdown>{task.summary}</Markdown>
             </div>
@@ -68,14 +78,19 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
             </ol>
           </section>
         )}
-        <details>
-          <summary>Brief from the manager</summary>
-          <p className="brief">{task.brief}</p>
-        </details>
-        <p className="muted tiny">
-          {task.id} · {task.usage.inputTokens.toLocaleString()} in / {task.usage.outputTokens.toLocaleString()} out tokens
-          {task.usage.cacheReadTokens ? ` · ${task.usage.cacheReadTokens.toLocaleString()} cached` : ""}
-        </p>
+        {task.brief && (
+          <details>
+            <summary>{fromClaudeCode ? (task.kind === "subagent" ? "Its brief" : "Your latest request") : "Brief from the manager"}</summary>
+            <p className="brief">{task.brief}</p>
+          </details>
+        )}
+        {!fromClaudeCode && (
+          <p className="muted tiny">
+            {task.id} · {task.usage.inputTokens.toLocaleString()} in / {task.usage.outputTokens.toLocaleString()} out
+            tokens
+            {task.usage.cacheReadTokens ? ` · ${task.usage.cacheReadTokens.toLocaleString()} cached` : ""}
+          </p>
+        )}
       </div>
 
       <footer className="task-detail__footer">

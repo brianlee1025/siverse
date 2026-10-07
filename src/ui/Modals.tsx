@@ -11,6 +11,7 @@ export function Modals({ snapshot }: { snapshot: Snapshot }) {
       return <SettingsModal snapshot={snapshot} />;
     case "department": {
       const department = snapshot.departments.find((d) => d.id === modal.departmentId) ?? null;
+      if (department?.source === "claude-code") return <ClaudeCodeProjectModal department={department} snapshot={snapshot} />;
       return <DepartmentModal key={modal.departmentId ?? "new"} department={department} />;
     }
     case "drive":
@@ -323,6 +324,40 @@ function FileModal({ path }: { path: string }) {
         </div>
       ) : (
         <pre className="code">{content}</pre>
+      )}
+    </Modal>
+  );
+}
+
+function ClaudeCodeProjectModal({ department, snapshot }: { department: Department; snapshot: Snapshot }) {
+  const selectTask = useStore((s) => s.selectTask);
+  const openModal = useStore((s) => s.openModal);
+  const workers = snapshot.tasks.filter((t) => t.departmentId === department.id && t.status === "working");
+  return (
+    <Modal title={`⚡ ${department.name}`}>
+      <p className="hint">
+        A Claude Code project at <code>{department.projectPath}</code>. Siverse shows what your Claude Code sessions
+        here are doing. To give them work, type in Claude Code.
+      </p>
+      <h4>At work now</h4>
+      {workers.length === 0 ? (
+        <p className="muted">Nobody right now.</p>
+      ) : (
+        <ul className="file-list">
+          {workers.map((t) => (
+            <li key={t.id}>
+              <button
+                className="link"
+                onClick={() => {
+                  selectTask(t.id);
+                  openModal(null);
+                }}
+              >
+                {t.kind === "subagent" ? "👥" : "🧑‍💻"} {t.workerName}: {t.title}
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
     </Modal>
   );

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 import Markdown from "react-markdown";
 import type { ChatMessage, Snapshot } from "../../shared/types";
 import { api, useStore } from "../store";
+import { claudeCodeIsLive } from "../claudeCode";
+import { ClaudeCodeFeed } from "./ClaudeCodeFeed";
 
 const SUGGESTIONS = [
   "Set up Marketing, Research and Engineering departments for a coffee subscription startup",
@@ -15,6 +17,8 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
   const connected = useStore((s) => s.connected);
   const openModal = useStore((s) => s.openModal);
   const setChatOpen = useStore((s) => s.setChatOpen);
+  const tab = useStore((s) => s.chatTab);
+  const setTab = useStore((s) => s.setChatTab);
   const list = useRef<HTMLDivElement>(null);
   const { busy, activity } = snapshot.manager;
   const hasKey = Boolean(snapshot.settings.apiKeySource);
@@ -55,26 +59,8 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
     }
   };
 
-  return (
-    <aside className="chat" aria-label="Chat with your manager">
-      <header className="panel-header">
-        <div className="chat__who">
-          <span className="avatar avatar--manager">M</span>
-          <div>
-            <strong>Manager</strong>
-            <small>{busy ? "working on it…" : "ready for orders"}</small>
-          </div>
-        </div>
-        <div className="panel-header__actions">
-          <button className="btn btn--ghost btn--sm" onClick={newDay} disabled={busy} title="Clear the conversation">
-            ☀️ New day
-          </button>
-          <button className="icon-btn hide-lg" onClick={() => setChatOpen(false)} aria-label="Close chat">
-            ✕
-          </button>
-        </div>
-      </header>
-
+  const managerView = (
+    <>
       <div className="chat__messages" ref={list}>
         {snapshot.chat.length === 0 && (
           <div className="chat__welcome">
@@ -126,6 +112,41 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
           Send
         </button>
       </form>
+    </>
+  );
+
+  return (
+    <aside className="chat" aria-label="Chat with your manager">
+      <header className="panel-header">
+        <div className="tabs" role="tablist">
+          <button role="tab" aria-selected={tab === "manager"} className="tab" onClick={() => setTab("manager")}>
+            Manager
+          </button>
+          <button role="tab" aria-selected={tab === "claude-code"} className="tab" onClick={() => setTab("claude-code")}>
+            <span className={`live-dot${claudeCodeIsLive(snapshot) ? " live-dot--on" : ""}`} />
+            Claude Code
+          </button>
+        </div>
+        <div className="panel-header__actions">
+          {tab === "manager" && (
+            <button className="btn btn--ghost btn--sm" onClick={newDay} disabled={busy} title="Clear the conversation">
+              ☀️ New day
+            </button>
+          )}
+          <button className="icon-btn hide-lg" onClick={() => setChatOpen(false)} aria-label="Close chat">
+            ✕
+          </button>
+        </div>
+      </header>
+
+      {tab === "claude-code" ? (
+        <>
+          <ClaudeCodeFeed snapshot={snapshot} />
+          <p className="chat__hint">Type your prompts in Claude Code. Siverse shows what happens in the office.</p>
+        </>
+      ) : (
+        managerView
+      )}
     </aside>
   );
 }

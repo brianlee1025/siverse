@@ -1,4 +1,5 @@
 import type { Department, Snapshot, Task } from "../../shared/types";
+import { isClaudeCode } from "../../shared/types";
 import { useStore } from "../store";
 
 const STATUS_LABEL: Record<Task["status"], string> = {
@@ -13,12 +14,15 @@ export function TaskBoard({ snapshot }: { snapshot: Snapshot }) {
   const openModal = useStore((s) => s.openModal);
   const setBoardOpen = useStore((s) => s.setBoardOpen);
   const departments = new Map(snapshot.departments.map((d) => [d.id, d]));
-  const working = snapshot.tasks.filter((t) => t.status === "working");
-  const queued = snapshot.tasks.filter((t) => t.status === "queued");
-  const finished = snapshot.tasks
+  const officeDepartments = snapshot.departments.filter((d) => !isClaudeCode(d));
+  const officeTasks = snapshot.tasks.filter((t) => !isClaudeCode(t));
+  const working = officeTasks.filter((t) => t.status === "working");
+  const queued = officeTasks.filter((t) => t.status === "queued");
+  const finished = officeTasks
     .filter((t) => t.status !== "working" && t.status !== "queued")
     .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
     .slice(0, 25);
+  const claudeCodeLive = snapshot.tasks.filter((t) => isClaudeCode(t) && t.status === "working");
 
   return (
     <aside className="board" aria-label="Departments and tasks">
@@ -34,11 +38,11 @@ export function TaskBoard({ snapshot }: { snapshot: Snapshot }) {
         </div>
       </header>
       <div className="board__scroll">
-        {snapshot.departments.length === 0 ? (
+        {officeDepartments.length === 0 ? (
           <p className="muted board__empty">No departments yet. Ask the manager to open one, or add it yourself.</p>
         ) : (
           <ul className="dept-list">
-            {snapshot.departments.map((d) => {
+            {officeDepartments.map((d) => {
               const busy = working.filter((t) => t.departmentId === d.id).length;
               return (
                 <li key={d.id}>
@@ -58,6 +62,7 @@ export function TaskBoard({ snapshot }: { snapshot: Snapshot }) {
           </ul>
         )}
 
+        <TaskSection title="⚡ Claude Code, live" tasks={claudeCodeLive} departments={departments} />
         <TaskSection title="Working" tasks={working} departments={departments} />
         <TaskSection title="Waiting for a desk" tasks={queued} departments={departments} />
         <TaskSection title="Recent" tasks={finished} departments={departments} />
@@ -86,7 +91,9 @@ function TaskSection({ title, tasks, departments }: { title: string; tasks: Task
           >
             <span className="task-card__top">
               <span className="task-card__title">{task.title}</span>
-              <span className={`pill pill--${task.status}`}>{STATUS_LABEL[task.status]}</span>
+              <span className={`pill pill--${task.status}`}>
+                {isClaudeCode(task) && task.status === "working" ? "Live" : STATUS_LABEL[task.status]}
+              </span>
             </span>
             <span className="task-card__meta">
               {department?.name ?? "Closed department"}

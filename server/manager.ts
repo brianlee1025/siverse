@@ -4,7 +4,7 @@ import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { BetaMessage, BetaMessageParam, BetaToolResultBlockParam } from "@anthropic-ai/sdk/resources/beta/messages";
 import { z } from "zod";
 import type { Department } from "../shared/types";
-import { MAX_HEADCOUNT } from "../shared/types";
+import { MAX_HEADCOUNT, isClaudeCode } from "../shared/types";
 import { blockActivity, explainError, finalText, modelParams, shorten } from "./claude";
 import { COMPANY_MEMORY_DIR, DATA_DIR, MANAGER_MAX_ITERATIONS, MAX_CONCURRENT_WORKERS } from "./config";
 import { listDrive, readDriveFile } from "./drive";
@@ -67,11 +67,13 @@ How to act:
 
 function officeStatus(): string {
   const lines = [`Company: ${getSettings().companyName}`];
-  if (!state.departments.length) {
+  // Claude Code projects are only mirrored in the office; the manager doesn't run them.
+  const departments = state.departments.filter((d) => !isClaudeCode(d));
+  if (!departments.length) {
     lines.push("Departments: none yet.");
   } else {
     lines.push("Departments:");
-    for (const d of state.departments) {
+    for (const d of departments) {
       const tasks = state.tasks.filter((t) => t.departmentId === d.id);
       const working = tasks.filter((t) => t.status === "working").length;
       const queued = tasks.filter((t) => t.status === "queued").length;
@@ -81,7 +83,7 @@ function officeStatus(): string {
       if (d.description) lines.push(`  Standing instructions: ${shorten(d.description, 240)}`);
     }
   }
-  const recent = state.tasks.slice(-15);
+  const recent = state.tasks.filter((t) => !isClaudeCode(t)).slice(-15);
   if (recent.length) {
     lines.push("Recent tasks (oldest first):");
     for (const t of recent) {
@@ -96,7 +98,7 @@ function officeStatus(): string {
 function requireDepartment(ref: string): Department {
   const department = findDepartment(ref);
   if (!department) {
-    const names = state.departments.map((d) => d.name).join(", ") || "none";
+    const names = state.departments.filter((d) => !isClaudeCode(d)).map((d) => d.name).join(", ") || "none";
     throw new OfficeError(`No department "${ref}". Existing departments: ${names}.`);
   }
   return department;

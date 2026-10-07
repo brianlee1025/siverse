@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { ChatMessage, ChatRole, Department, Snapshot, Task } from "../shared/types";
+import type { ChatMessage, ChatRole, Department, FeedItem, Snapshot, Task } from "../shared/types";
+import { isClaudeCode } from "../shared/types";
+import { isInstalled as claudeCodeHooksInstalled } from "./claudeCodeHooks";
 import { DATA_DIR, MAX_CONCURRENT_WORKERS } from "./config";
 import { settingsView } from "./settings";
 
@@ -17,6 +19,19 @@ const SNAPSHOT_CHAT = 200;
 
 export const state: PersistedState = { departments: [], tasks: [], chat: [] };
 export const managerStatus = { busy: false, activity: null as string | null };
+
+// What your Claude Code sessions are doing. Kept in memory only: it mirrors live sessions,
+// and Claude Code sends fresh events as soon as you use it again after a restart.
+export const claudeCodeLive = { lastEventAt: null as number | null, feed: [] as FeedItem[] };
+
+let hooksCheck = { at: 0, installed: false };
+function hooksInstalled() {
+  if (Date.now() - hooksCheck.at > 10_000) hooksCheck = { at: Date.now(), installed: claudeCodeHooksInstalled() };
+  return hooksCheck.installed;
+}
+export function forgetHooksCheck() {
+  hooksCheck.at = 0;
+}
 
 const PALETTE = ["#e07a5f", "#3d85c6", "#81b29a", "#f2cc8f", "#9b72cf", "#e5989b", "#48a9a6", "#d4a373"];
 
@@ -60,7 +75,12 @@ export function saveNow() {
   clearTimeout(saveTimer);
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const tmp = `${STATE_FILE}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(state));
+  const persisted: PersistedState = {
+    ...state,
+    departments: state.departments.filter((d) => !isClaudeCode(d)),
+    tasks: state.tasks.filter((t) => !isClaudeCode(t)),
+  };
+  fs.writeFileSync(tmp, JSON.stringify(persisted));
   fs.renameSync(tmp, STATE_FILE);
 }
 
@@ -76,6 +96,7 @@ export function snapshot(): Snapshot {
     chat: state.chat.slice(-SNAPSHOT_CHAT),
     manager: { ...managerStatus },
     maxConcurrentWorkers: MAX_CONCURRENT_WORKERS,
+    claudeCode: { hooksInstalled: hooksInstalled(), ...claudeCodeLive },
   };
 }
 
@@ -105,10 +126,12 @@ export function nextDepartmentColor() {
   return PALETTE.find((c) => !used.has(c)) ?? PALETTE[state.departments.length % PALETTE.length];
 }
 
-/** Finds a department by id or (case-insensitive) name. */
+/** Finds an office department (not a Claude Code project) by id or case-insensitive name. */
 export function findDepartment(ref: string): Department | undefined {
   const needle = ref.trim().toLowerCase();
-  return state.departments.find((d) => d.id === needle || d.name.toLowerCase() === needle || d.id === slugify(ref));
+  return state.departments.find(
+    (d) => !isClaudeCode(d) && (d.id === needle || d.name.toLowerCase() === needle || d.id === slugify(ref)),
+  );
 }
 
 export function findTask(id: string): Task | undefined {

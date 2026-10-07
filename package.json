@@ -13,6 +13,8 @@
     "dev:server": "tsx watch --clear-screen=false server/index.ts",
     "dev:web": "vite",
     "demo": "SIVERSE_DEMO=1 npm run dev",
+    "cc:connect": "tsx scripts/claude-code.ts install",
+    "cc:disconnect": "tsx scripts/claude-code.ts uninstall",
     "build": "tsc --noEmit && vite build",
     "start": "NODE_ENV=production tsx server/index.ts",
     "typecheck": "tsc --noEmit"

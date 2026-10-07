@@ -212,10 +212,13 @@ function DepartmentZone({ department, layout, tasks }: { department: Department;
       <Rug zone={zone} color={department.color} opacity={0.28} onClick={open} />
       <Html position={[zone.center[0], 2.3, zone.center[1] - ZONE_D / 2 + 0.3]} center distanceFactor={16} zIndexRange={[20, 0]}>
         <button className="zone-sign" style={{ borderColor: department.color }} onClick={open}>
-          <strong style={{ color: department.color }}>{department.name}</strong>
+          <strong style={{ color: department.color }}>
+            {department.source === "claude-code" ? `⚡ ${department.name}` : department.name}
+          </strong>
           <span>
-            {working.length}/{department.headcount} working{queued ? ` · ${queued} waiting` : ""}
-            {department.webAccess ? " · 🌐" : ""}
+            {department.source === "claude-code"
+              ? `Claude Code · ${working.length} at work`
+              : `${working.length}/${department.headcount} working${queued ? ` · ${queued} waiting` : ""}${department.webAccess ? " · 🌐" : ""}`}
           </span>
         </button>
       </Html>

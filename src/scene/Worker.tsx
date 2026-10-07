@@ -31,7 +31,9 @@ export function Worker({ task, department, layout, selected, onSelect }: WorkerP
   const motion = useRef<Motion>({ walking: false, sitting: false, typing: false });
   const nav = useRef<{ waypoints: Vector3[]; index: number } | null>(null);
   const [gone, setGone] = useState(false);
-  const look = useMemo(() => lookFor(task.workerName ?? task.id), [task.workerName, task.id]);
+  // Claude Code subagents share names like "Explore", so give each one its own look.
+  const seed = task.source === "claude-code" ? task.id : (task.workerName ?? task.id);
+  const look = useMemo(() => lookFor(seed), [seed]);
 
   // Place the worker before the first paint: walking in from the door, or already seated.
   useLayoutEffect(() => {

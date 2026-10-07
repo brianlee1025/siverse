@@ -21,11 +21,13 @@ interface UIState {
   toast: Toast | null;
   chatOpen: boolean; // only matters on narrow screens
   boardOpen: boolean;
+  chatTab: "manager" | "claude-code";
   selectTask: (id: string | null) => void;
   openModal: (modal: Modal | null) => void;
   showToast: (text: string, tone?: Toast["tone"]) => void;
   setChatOpen: (open: boolean) => void;
   setBoardOpen: (open: boolean) => void;
+  setChatTab: (tab: UIState["chatTab"]) => void;
 }
 
 export const useStore = create<UIState>((set) => ({
@@ -36,11 +38,13 @@ export const useStore = create<UIState>((set) => ({
   toast: null,
   chatOpen: false,
   boardOpen: false,
+  chatTab: "manager",
   selectTask: (selectedTaskId) => set({ selectedTaskId }),
   openModal: (modal) => set({ modal }),
   showToast: (text, tone = "info") => set({ toast: { id: Date.now(), text, tone } }),
   setChatOpen: (chatOpen) => set({ chatOpen }),
   setBoardOpen: (boardOpen) => set({ boardOpen }),
+  setChatTab: (chatTab) => set({ chatTab }),
 }));
 
 /** Keeps a WebSocket open to the server and mirrors its snapshots into the store. */

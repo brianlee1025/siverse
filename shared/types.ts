@@ -3,6 +3,11 @@
 
 export type TaskStatus = "queued" | "working" | "done" | "failed" | "cancelled";
 
+// "office" items are run by Siverse's own agents through the Claude API. "claude-code" items
+// mirror what your own Claude Code sessions are doing, reported by Claude Code hooks; Siverse
+// never calls Claude for those.
+export type Source = "office" | "claude-code";
+
 export interface Department {
   id: string; // url-safe slug, also the department's folder name in the company drive
   name: string;
@@ -12,6 +17,8 @@ export interface Department {
   headcount: number; // max workers at the same time = max tasks running at once
   webAccess: boolean;
   createdAt: number;
+  source?: Source; // missing = "office"
+  projectPath?: string; // claude-code: the project folder the sessions run in
 }
 
 export interface TaskUsage {
@@ -36,6 +43,9 @@ export interface Task {
   createdAt: number;
   startedAt?: number;
   finishedAt?: number;
+  source?: Source; // missing = "office"
+  kind?: "session" | "subagent"; // claude-code only
+  sessionId?: string; // claude-code only
 }
 
 export type ChatRole = "boss" | "manager" | "system";
@@ -57,6 +67,20 @@ export interface SettingsView {
   workerModel: string;
 }
 
+export interface FeedItem {
+  id: string;
+  role: "you" | "claude";
+  project: string;
+  text: string;
+  at: number;
+}
+
+export interface ClaudeCodeView {
+  hooksInstalled: boolean; // Siverse hooks found in ~/.claude/settings.json
+  lastEventAt: number | null;
+  feed: FeedItem[]; // your prompts and Claude's replies, newest last
+}
+
 export interface Snapshot {
   settings: SettingsView;
   departments: Department[];
@@ -64,6 +88,7 @@ export interface Snapshot {
   chat: ChatMessage[];
   manager: { busy: boolean; activity: string | null };
   maxConcurrentWorkers: number;
+  claudeCode: ClaudeCodeView;
 }
 
 export type ServerMessage = { type: "snapshot"; data: Snapshot };
@@ -76,3 +101,5 @@ export const MODEL_OPTIONS = [
 ] as const;
 
 export const MAX_HEADCOUNT = 6;
+
+export const isClaudeCode = (item: { source?: Source }) => item.source === "claude-code";

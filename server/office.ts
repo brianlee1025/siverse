@@ -1,5 +1,5 @@
 import type { Department, Task } from "../shared/types";
-import { MAX_HEADCOUNT } from "../shared/types";
+import { MAX_HEADCOUNT, isClaudeCode } from "../shared/types";
 import { MAX_CONCURRENT_WORKERS } from "./config";
 import { explainError } from "./claude";
 import { DEMO_MODE, runDemoWorker } from "./demo";
@@ -93,7 +93,12 @@ export function assignTask(department: Department, title: string, brief: string)
   return task;
 }
 
+function rejectClaudeCode(task: Task) {
+  if (isClaudeCode(task)) throw new OfficeError("That's a Claude Code session. Manage it from Claude Code.");
+}
+
 export function cancelTask(task: Task) {
+  rejectClaudeCode(task);
   if (task.status === "queued") {
     finish(task, "cancelled", { error: "Cancelled by the boss." });
   } else if (task.status === "working") {
@@ -104,6 +109,7 @@ export function cancelTask(task: Task) {
 }
 
 export function retryTask(task: Task): Task {
+  rejectClaudeCode(task);
   const department = state.departments.find((d) => d.id === task.departmentId);
   if (!department) throw new OfficeError("That department no longer exists.");
   return assignTask(department, task.title, task.brief);
