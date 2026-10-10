@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { DATA_DIR, ROOT_DIR } from "./config";
 
 // The Claude Code CLI on this computer, which the "claude-code" engine runs headless (`claude -p`)
 // for every worker and for the manager. It runs on the boss's own Claude login and plan, exactly as
@@ -129,6 +130,23 @@ export interface StreamEvent {
   total_cost_usd?: number;
   num_turns?: number;
   usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number };
+  // type "rate_limit_event": the account's plan usage, reported on every run.
+  rate_limit_info?: RateLimitInfo;
+}
+
+export interface RateLimitInfo {
+  status?: string; // "allowed", "allowed_warning" or "rejected"
+  resetsAt?: number;
+  rateLimitType?: string; // "five_hour", "seven_day", …
+  utilization?: number; // 0-1, for rateLimitType
+  unifiedWindows?: Record<string, { utilization?: number; resetsAt?: number } | undefined>;
+}
+
+const rateLimitListeners = new Set<(info: RateLimitInfo) => void>();
+
+/** Called with every rate-limit report from any Claude Code run Siverse starts. */
+export function onRateLimit(listener: (info: RateLimitInfo) => void) {
+  rateLimitListeners.add(listener);
 }
 
 export type ContentBlock =
@@ -141,11 +159,92 @@ export interface RunOptions {
   cwd: string;
   prompt: string; // sent on stdin, never on the command line
   args: string[]; // fixed flags only: no text that came from the boss or a model
+  env?: Record<string, string>; // added to the environment
   signal: AbortSignal;
   onEvent: (event: StreamEvent) => void;
 }
 
 export class ClaudeCliError extends Error {}
+
+/** A permission-rule path for a file: absolute, POSIX form, e.g. "//c/Users/me/siverse/.env". */
+export function rulePath(file: string) {
+  let posix = path.resolve(file).split(path.sep).join("/");
+  const drive = /^([A-Za-z]):\//.exec(posix);
+  if (drive) posix = `/${drive[1].toLowerCase()}/${posix.slice(3)}`;
+  return `/${posix}`;
+}
+
+/**
+ * Deny rules for every Claude Code run Siverse starts: its file tools can't read or change
+ * Siverse's secrets (.env, where approved commands' passwords live, and the saved API key), and
+ * can't change the approved copies of command scripts.
+ */
+export function protectedFileRules(): string[] {
+  const secrets = [path.join(ROOT_DIR, ".env"), path.join(ROOT_DIR, ".env.local"), path.join(DATA_DIR, "settings.json")];
+  return [
+    ...secrets.flatMap((file) => [`Read(${rulePath(file)})`, `Edit(${rulePath(file)})`]),
+    `Edit(${rulePath(path.join(DATA_DIR, "tools"))}/**)`,
+  ];
+}
+
+// What a department with code access still can't change: Siverse's data and secrets, git and
+// dependencies, and the code that enforces approvals and these rules. This stops accidents, not a
+// determined worker: any server file runs inside Siverse.
+const PROTECTED_CODE = [
+  "data/**", ".env*", ".git/**", "node_modules/**", ".claude/**", "package.json", "package-lock.json",
+  "server/commands.ts", "server/claudeCli.ts", "server/ccWorker.ts", "server/ccManager.ts", "server/security.ts",
+  "scripts/siverse-worker-mcp.mjs", "scripts/siverse-mcp.mjs",
+];
+
+export const protectedCodePaths = () =>
+  PROTECTED_CODE.map((p) => (p === "data/**" ? "data/ (except your notes folders)" : p.replace("/**", "/")));
+
+/**
+ * Deny rules for a department with code access: everything above, which deny rules always win over.
+ * `notesDirs`, the worker's own notes folders inside data/, stay writable.
+ */
+export function protectedCodeRules(notesDirs: string[] = []): string[] {
+  return PROTECTED_CODE.flatMap((p) => (p === "data/**" ? dataRules(notesDirs) : [`Edit(${rulePath(ROOT_DIR)}/${p})`]));
+}
+
+/**
+ * data/ minus the given folders. A deny rule can't have exceptions, so this denies each of data/'s
+ * other entries instead, going down only into folders that hold a kept one (e.g. data/memory/).
+ */
+function dataRules(keep: string[]): string[] {
+  const kept = keep.map((dir) => path.resolve(dir));
+  const isInside = (child: string, parent: string) => {
+    const relative = path.relative(parent, child);
+    return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+  };
+  if (!kept.some((dir) => isInside(dir, DATA_DIR))) return [`Edit(${rulePath(DATA_DIR)}/**)`];
+  // Also data/'s own files that don't exist yet; `*` doesn't reach into subfolders.
+  const rules = [`Edit(${rulePath(DATA_DIR)}/*.json)`];
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (kept.some((k) => path.relative(k, full) === "")) continue;
+      if (entry.isDirectory() && kept.some((k) => isInside(k, full))) walk(full);
+      else rules.push(`Edit(${rulePath(full)}${entry.isDirectory() ? "/**" : ""})`);
+    }
+  };
+  walk(DATA_DIR);
+  return rules;
+}
+
+let hiddenEnv: () => string[] = () => [];
+
+/** Environment variables Claude Code runs must never get, e.g. the secrets of approved commands. */
+export function hideFromClaudeCode(names: () => string[]) {
+  hiddenEnv = names;
+}
+
+function claudeCodeEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, SIVERSE_RUN: "1", ...extra };
+  const hidden = new Set(hiddenEnv().map((n) => n.toUpperCase()));
+  for (const name of Object.keys(env)) if (hidden.has(name.toUpperCase())) delete env[name];
+  return env;
+}
 
 /** Runs `claude -p` to the end and returns its final "result" event. */
 export function runClaudeCli(options: RunOptions): Promise<StreamEvent> {
@@ -159,7 +258,7 @@ export function runClaudeCli(options: RunOptions): Promise<StreamEvent> {
   return new Promise((resolve, reject) => {
     const child = spawn(cli.shell ? `"${cli.path}"` : cli.path, cli.shell ? args.map(quoteForShell) : args, {
       cwd: options.cwd,
-      env: { ...process.env, SIVERSE_RUN: "1" },
+      env: claudeCodeEnv(options.env),
       shell: cli.shell,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
@@ -186,6 +285,9 @@ export function runClaudeCli(options: RunOptions): Promise<StreamEvent> {
           continue; // Not an event line.
         }
         if (event.type === "result") result = event;
+        if (event.type === "rate_limit_event" && event.rate_limit_info) {
+          for (const listener of rateLimitListeners) listener(event.rate_limit_info);
+        }
         try {
           options.onEvent(event);
         } catch (error) {
@@ -217,9 +319,37 @@ export function runClaudeCli(options: RunOptions): Promise<StreamEvent> {
   });
 }
 
+export interface AuthStatus {
+  loggedIn: boolean;
+  authMethod?: string;
+  subscriptionType?: string | null;
+}
+
+/** `claude auth status`: whether the CLI is signed in, and to which kind of plan. Null without a CLI. */
+export function readAuthStatus(): Promise<AuthStatus | null> {
+  const cli = findClaudeCli();
+  if (!cli) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    execFile(
+      cli.shell ? `"${cli.path}"` : cli.path,
+      ["auth", "status"],
+      { encoding: "utf8", timeout: 15_000, shell: cli.shell, windowsHide: true },
+      // It can exit non-zero when signed out, with the same JSON on stdout.
+      (_error, stdout) => {
+        try {
+          const status = JSON.parse(stdout.slice(stdout.indexOf("{")));
+          resolve({ loggedIn: Boolean(status.loggedIn), authMethod: status.authMethod, subscriptionType: status.subscriptionType ?? null });
+        } catch {
+          resolve(null);
+        }
+      },
+    );
+  });
+}
+
 /** Only used for a .cmd wrapper: every argument is ours, but paths can contain spaces. */
 function quoteForShell(arg: string) {
-  return /[\s"&|<>^]/.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg;
+  return arg === "" || /[\s"&|<>^]/.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg;
 }
 
 /** The message of a failed result event, in plain words. */

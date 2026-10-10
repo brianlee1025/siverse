@@ -1,6 +1,7 @@
 import type { Department, Schedule, ScheduleCadence, Task } from "../shared/types";
 import { describeCadence } from "../shared/types";
-import { OfficeError, assignTask } from "./office";
+import { departmentStaff } from "./employees";
+import { OfficeError, assignTask, onTaskFinished } from "./office";
 import { aiOfficeEnabled } from "./settings";
 import { addChat, changed, newId, state } from "./store";
 
@@ -11,16 +12,27 @@ import { addChat, changed, newId, state } from "./store";
 const TICK_MS = 30_000;
 const MAX_INTERVAL_HOURS = 24 * 28;
 const MAX_SCHEDULES_PER_DEPARTMENT = 12;
+const MAX_CHAIN = 5; // A after B after C…: longer chains are refused, and so is any loop
+const HANDOVER_MAX_FILES = 20;
+const HANDOVER_FILES_CHARS = 500;
+const HANDOVER_SUMMARY_CHARS = 600;
 
 export interface ScheduleInput {
   title: string;
   brief: string;
   cadence: ScheduleCadence;
   enabled?: boolean;
+  employeeId?: string | null; // a permanent employee who always does it; null = whoever is free
+}
+
+function checkEmployee(departmentId: string, employeeId: string) {
+  if (!departmentStaff(departmentId).some((e) => e.id === employeeId)) {
+    throw new OfficeError("That employee doesn't work in this department.");
+  }
 }
 
 /** Checks a cadence from the boss or the manager and returns a clean copy. */
-export function cleanCadence(cadence: ScheduleCadence): ScheduleCadence {
+export function cleanCadence(cadence: ScheduleCadence, selfId?: string): ScheduleCadence {
   switch (cadence.kind) {
     case "daily":
       return { kind: "daily", time: cleanTime(cadence.time) };
@@ -36,8 +48,26 @@ export function cleanCadence(cadence: ScheduleCadence): ScheduleCadence {
       }
       return { kind: "interval", hours };
     }
+    case "after": {
+      const leader = findSchedule(String(cadence.scheduleId ?? ""));
+      if (!leader) throw new OfficeError("Pick the recurring task this one should run after.");
+      // Walk the chain so A-after-B-after-A can't be saved.
+      let link: Schedule | undefined = leader;
+      for (let steps = 1; link; steps++) {
+        if (link.id === selfId) {
+          throw new OfficeError(
+            steps === 1
+              ? "A recurring task can't run after itself."
+              : `That would make a loop: "${leader.title}" already runs after this one.`,
+          );
+        }
+        if (steps > MAX_CHAIN) throw new OfficeError(`A chain can be at most ${MAX_CHAIN} tasks long.`);
+        link = link.cadence.kind === "after" ? findSchedule(link.cadence.scheduleId) : undefined;
+      }
+      return { kind: "after", scheduleId: leader.id };
+    }
     default:
-      throw new OfficeError("A schedule runs daily, weekly or every few hours.");
+      throw new OfficeError("A schedule runs daily, weekly, every few hours, or after another recurring task.");
   }
 }
 
@@ -51,6 +81,7 @@ function cleanTime(time: string): string {
 
 /** The first run strictly after `after`, in local time. */
 export function nextRun(cadence: ScheduleCadence, after: number): number {
+  if (cadence.kind === "after") return Number.MAX_SAFE_INTEGER; // its leader starts it, never the clock
   if (cadence.kind === "interval") return after + cadence.hours * 3_600_000;
   const [hours, minutes] = cadence.time.split(":").map(Number);
   const at = new Date(after);
@@ -82,6 +113,10 @@ export function createSchedule(department: Department, input: ScheduleInput): Sc
     createdAt: now,
     nextRunAt: nextRun(cadence, now),
   };
+  if (input.employeeId) {
+    checkEmployee(department.id, input.employeeId);
+    schedule.employeeId = input.employeeId;
+  }
   if (!schedule.brief) throw new OfficeError("A schedule needs a brief: what should the worker do each time?");
   state.schedules.push(schedule);
   changed();
@@ -95,8 +130,13 @@ export function updateSchedule(schedule: Schedule, patch: Partial<ScheduleInput>
     if (!brief) throw new OfficeError("A schedule needs a brief.");
     schedule.brief = brief;
   }
-  if (patch.cadence !== undefined) schedule.cadence = cleanCadence(patch.cadence);
+  if (patch.cadence !== undefined) schedule.cadence = cleanCadence(patch.cadence, schedule.id);
   if (patch.enabled !== undefined) schedule.enabled = patch.enabled;
+  if (patch.employeeId !== undefined) {
+    if (patch.employeeId) checkEmployee(schedule.departmentId, patch.employeeId);
+    if (patch.employeeId) schedule.employeeId = patch.employeeId;
+    else delete schedule.employeeId;
+  }
   // A new timetable, or coming back from a pause, counts from now: no catch-up for the pause.
   if (patch.cadence !== undefined || patch.enabled) schedule.nextRunAt = nextRun(schedule.cadence, Date.now());
   changed();
@@ -124,11 +164,32 @@ export function runScheduleNow(schedule: Schedule): Task {
   return startRun(schedule, department);
 }
 
-function startRun(schedule: Schedule, department: Department): Task {
-  const brief = `${schedule.brief}
+/** "{date}" becomes the run's local date (YYYY-MM-DD), "{weekday}" its day. Local, not toISOString (UTC). */
+function fillPlaceholders(text: string, at: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const date = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+  const weekday = at.toLocaleDateString("en-GB", { weekday: "long" });
+  return text.split("{date}").join(date).split("{weekday}").join(weekday);
+}
 
-(This is a recurring task: ${describeCadence(schedule.cadence).toLowerCase()}. Earlier runs may have left work in your folder and lessons in your notes. Build on them: add what is new, keep what still holds, and don't repeat what was already done.)`;
-  const task = assignTask(department, schedule.title, brief, { scheduleId: schedule.id });
+/** What the previous step of a chain left behind, so the next step can pick it up without guessing paths. */
+function handOver(leader: Task): string {
+  const title = (leader.scheduleId && findSchedule(leader.scheduleId)?.title) || leader.title;
+  const files = leader.outputs.slice(0, HANDOVER_MAX_FILES).join(", ").slice(0, HANDOVER_FILES_CHARS) || "none";
+  const summary = (leader.summary ?? "").slice(0, HANDOVER_SUMMARY_CHARS);
+  return `
+
+(This run follows "${title}" (${leader.id}), which just finished.
+Its files: ${files}.
+Its summary: ${summary})`;
+}
+
+function startRun(schedule: Schedule, department: Department, leader?: Task): Task {
+  const brief = `${fillPlaceholders(schedule.brief, new Date())}
+
+(This is a recurring task: ${describeCadence(schedule.cadence).toLowerCase()}. Earlier runs may have left work in your folder and lessons in your notes. Build on them: add what is new, keep what still holds, and don't repeat what was already done.)${leader ? handOver(leader) : ""}`;
+  const employeeId = departmentStaff(department.id).some((e) => e.id === schedule.employeeId) ? schedule.employeeId : undefined;
+  const task = assignTask(department, schedule.title, brief, { scheduleId: schedule.id, employeeId });
   schedule.lastRunAt = Date.now();
   schedule.lastTaskId = task.id;
   changed();
@@ -139,6 +200,28 @@ function stillOpen(schedule: Schedule): boolean {
   return state.tasks.some(
     (t) => t.scheduleId === schedule.id && (t.status === "queued" || t.status === "working"),
   );
+}
+
+/** When a scheduled task finishes, starts the schedules set to run after it. */
+function startFollowers(task: Task) {
+  // A follow-up finishing is not a new run of the schedule.
+  if (!task.scheduleId || task.thread || !aiOfficeEnabled()) return;
+  const leader = findSchedule(task.scheduleId);
+  if (!leader) return;
+  for (const follower of [...state.schedules]) {
+    if (!follower.enabled || follower.cadence.kind !== "after" || follower.cadence.scheduleId !== leader.id) continue;
+    const department = state.departments.find((d) => d.id === follower.departmentId);
+    if (!department) continue;
+    if (task.status !== "done") {
+      // An error, not info: the chat's quiet mode must keep it, or a broken chain goes unnoticed.
+      addChat("system", `⏭️ Skipped "${follower.title}": "${leader.title}" didn't finish.`, { tone: "error" });
+    } else if (stillOpen(follower)) {
+      addChat("system", `⏭️ Skipped "${follower.title}" in ${department.name}: the last run is still going.`, { tone: "info" });
+    } else {
+      startRun(follower, department, task);
+      addChat("system", `⛓️ ${department.name} started "${follower.title}" after "${leader.title}" finished.`, { tone: "info" });
+    }
+  }
 }
 
 /** Starts every schedule that has come due. A run still in progress skips the next one. */
@@ -160,6 +243,7 @@ export function tickSchedules(now = Date.now()) {
 }
 
 export function startScheduleClock() {
+  onTaskFinished(startFollowers);
   tickSchedules();
   setInterval(() => {
     try {
@@ -170,12 +254,20 @@ export function startScheduleClock() {
   }, TICK_MS).unref();
 }
 
+/** "next run 13/10/2026, 09:00:00", or for a chained schedule, which one starts it. */
+export function whenNext(s: Schedule): string {
+  if (s.cadence.kind !== "after") return `next run ${new Date(s.nextRunAt).toLocaleString()}`;
+  const leader = findSchedule(s.cadence.scheduleId);
+  return leader ? `runs after "${leader.title}" (${leader.id}) finishes` : "waits on a removed schedule";
+}
+
 /** One line per schedule, for the manager's view of the office. */
 export function describeSchedules(): string[] {
   return state.schedules.map((s) => {
     const department = state.departments.find((d) => d.id === s.departmentId)?.name ?? "closed department";
-    const next = s.enabled ? `next ${new Date(s.nextRunAt).toLocaleString()}` : "paused";
-    return `- ${s.id} | ${department} | "${s.title}" | ${describeCadence(s.cadence)} | ${next}`;
+    const next = s.enabled ? whenNext(s) : "paused";
+    const who = state.employees.find((e) => e.id === s.employeeId)?.name ?? "whoever is free";
+    return `- ${s.id} | ${department} | ${who} | "${s.title}" | ${describeCadence(s.cadence)} | ${next}`;
   });
 }
 

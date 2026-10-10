@@ -2,10 +2,17 @@ node_modules/
 dist/
 .env
 .env.local
+.env.*
+!.env.example
+.claude/settings.local.json
+*.siverse-backup
+coverage/
+.vscode/
 
 # Local company data: settings (may hold your API key), chat history, memory, work output
 data/
 workspace/
 
 .DS_Store
+Thumbs.db
 *.log

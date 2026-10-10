@@ -4,17 +4,43 @@ import { betaMemoryTool, type MemoryToolHandlers } from "@anthropic-ai/sdk/helpe
 import { DriveError, resolveInside } from "./drive";
 
 // File-backed implementation of Claude's memory tool. Claude always addresses files as
-// /memories/..., which we map onto a real folder: one for the manager (company memory)
-// and one per department.
+// /memories/..., which we map onto real folders: one for the manager (company memory), one per
+// department, and for a permanent employee both their department's notes and their own, as
+// /memories/team/ and /memories/me/.
 
 const MAX_FILE_BYTES = 100_000;
 
-function toDisk(root: string, memoryPath: string): string {
-  const normalized = memoryPath.replace(/\\/g, "/");
+/** One folder for all of /memories, or named folders: { team: dir } is /memories/team/. */
+export type MemoryRoots = string | Record<string, string>;
+
+interface Resolved {
+  file: string; // on disk; empty for the /memories listing of named folders
+  base: string; // the folder that holds it
+  prefix: string; // the base's memory path, e.g. "/memories/team"
+}
+
+function toDisk(roots: MemoryRoots, memoryPath: string): Resolved {
+  const normalized = memoryPath.replace(/\\/g, "/").replace(/\/+$/, "");
   if (normalized !== "/memories" && !normalized.startsWith("/memories/")) {
     throw new DriveError(`Memory paths must start with /memories (got "${memoryPath}").`);
   }
-  return resolveInside(root, normalized.slice("/memories".length));
+  const rest = normalized.slice("/memories".length);
+  if (typeof roots === "string") return { file: resolveInside(roots, rest), base: roots, prefix: "/memories" };
+  const [name, ...inside] = rest.split("/").filter(Boolean);
+  if (!name) return { file: "", base: "", prefix: "/memories" };
+  const base = roots[name];
+  if (!base) {
+    const names = Object.keys(roots).map((n) => `/memories/${n}/`).join(" or ");
+    throw new DriveError(`Memory paths go inside ${names} (got "${memoryPath}").`);
+  }
+  return { file: resolveInside(base, inside.join("/")), base, prefix: `/memories/${name}` };
+}
+
+/** A path to a file, never one of the memory folders themselves. */
+function fileAt(roots: MemoryRoots, memoryPath: string): string {
+  const { file, base } = toDisk(roots, memoryPath);
+  if (!file || file === base) throw new DriveError(`${memoryPath} is a folder. Give a file path inside it.`);
+  return file;
 }
 
 function readText(file: string): string {
@@ -31,30 +57,38 @@ function writeText(file: string, text: string) {
   fs.writeFileSync(file, text);
 }
 
-function listTree(root: string, dir: string, depth: number, lines: string[]) {
+function listTree(base: string, prefix: string, dir: string, depth: number, lines: string[]) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (entry.name.startsWith(".")) continue;
     const full = path.join(dir, entry.name);
-    const display = `/memories/${path.relative(root, full).split(path.sep).join("/")}`;
+    const display = `${prefix}/${path.relative(base, full).split(path.sep).join("/")}`;
     if (entry.isDirectory()) {
       lines.push(`-\t${display}/`);
-      if (depth < 2) listTree(root, full, depth + 1, lines);
+      if (depth < 2) listTree(base, prefix, full, depth + 1, lines);
     } else {
       lines.push(`${fs.statSync(full).size}\t${display}`);
     }
   }
 }
 
-export function createMemoryTool(root: string) {
-  fs.mkdirSync(root, { recursive: true });
+export function createMemoryTool(roots: MemoryRoots) {
+  for (const dir of typeof roots === "string" ? [roots] : Object.values(roots)) fs.mkdirSync(dir, { recursive: true });
 
   const handlers: MemoryToolHandlers = {
     view({ path: memoryPath, view_range }) {
-      const target = toDisk(root, memoryPath);
+      const { file: target, base, prefix } = toDisk(roots, memoryPath);
+      if (!target && typeof roots !== "string") {
+        const lines: string[] = [];
+        for (const [name, dir] of Object.entries(roots)) {
+          lines.push(`-\t/memories/${name}/`);
+          listTree(dir, `/memories/${name}`, dir, 2, lines);
+        }
+        return `Files and folders in /memories (size in bytes):\n${lines.join("\n")}`;
+      }
       if (!fs.existsSync(target)) throw new DriveError(`Nothing at ${memoryPath}.`);
       if (fs.statSync(target).isDirectory()) {
         const lines: string[] = [];
-        listTree(root, target, 1, lines);
+        listTree(base, prefix, target, 1, lines);
         return lines.length
           ? `Files and folders in ${memoryPath} (size in bytes):\n${lines.join("\n")}`
           : `${memoryPath} is empty.`;
@@ -69,11 +103,11 @@ export function createMemoryTool(root: string) {
         .join("\n");
     },
     create({ path: memoryPath, file_text }) {
-      writeText(toDisk(root, memoryPath), file_text);
+      writeText(fileAt(roots, memoryPath), file_text);
       return `File created successfully at ${memoryPath}`;
     },
     str_replace({ path: memoryPath, old_str, new_str }) {
-      const target = toDisk(root, memoryPath);
+      const target = fileAt(roots, memoryPath);
       const text = readText(target);
       const count = text.split(old_str).length - 1;
       if (count === 0) throw new DriveError(`old_str was not found in ${memoryPath}.`);
@@ -82,7 +116,7 @@ export function createMemoryTool(root: string) {
       return `The memory file ${memoryPath} has been edited.`;
     },
     insert({ path: memoryPath, insert_line, insert_text }) {
-      const target = toDisk(root, memoryPath);
+      const target = fileAt(roots, memoryPath);
       const lines = readText(target).split("\n");
       if (insert_line < 0 || insert_line > lines.length) {
         throw new DriveError(`insert_line must be between 0 and ${lines.length}.`);
@@ -92,15 +126,15 @@ export function createMemoryTool(root: string) {
       return `Text inserted at line ${insert_line} of ${memoryPath}.`;
     },
     delete({ path: memoryPath }) {
-      const target = toDisk(root, memoryPath);
-      if (target === root) throw new DriveError("Refusing to delete the whole memory directory.");
+      const { file: target, base } = toDisk(roots, memoryPath);
+      if (!target || target === base) throw new DriveError("Refusing to delete a whole memory directory.");
       if (!fs.existsSync(target)) throw new DriveError(`Nothing at ${memoryPath}.`);
       fs.rmSync(target, { recursive: true });
       return `Deleted ${memoryPath}`;
     },
     rename({ old_path, new_path }) {
-      const from = toDisk(root, old_path);
-      const to = toDisk(root, new_path);
+      const from = fileAt(roots, old_path);
+      const to = fileAt(roots, new_path);
       if (!fs.existsSync(from)) throw new DriveError(`Nothing at ${old_path}.`);
       if (fs.existsSync(to)) throw new DriveError(`${new_path} already exists.`);
       fs.mkdirSync(path.dirname(to), { recursive: true });

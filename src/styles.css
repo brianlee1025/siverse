@@ -80,6 +80,11 @@ code {
   min-width: 0;
   min-height: 0;
 }
+/* The 3D labels' z-indexes (layout.ts BUBBLE_Z, SIGN_Z) only count inside the scene, so the
+   task card, side panels, windows and toasts always stay above them. */
+.scene-canvas {
+  isolation: isolate;
+}
 
 .loading {
   height: 100%;
@@ -282,6 +287,100 @@ code {
   display: none;
 }
 
+/* Claude plan usage: what is left of the 5-hour and weekly limits. */
+.plan {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px 4px 10px;
+  margin-right: 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.plan--limited {
+  border-color: var(--danger);
+}
+.plan__name {
+  font-weight: 700;
+}
+.plan__check {
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font-size: 14px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.plan__check:hover:not(:disabled) {
+  background: var(--line);
+}
+.plan__check:disabled {
+  cursor: progress;
+}
+.meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.meter__label {
+  color: var(--ink-3);
+}
+.meter__bar {
+  width: 44px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+.meter__fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--success);
+}
+.meter--low .meter__fill {
+  background: var(--warn);
+}
+.meter--out .meter__fill {
+  background: var(--danger);
+}
+.meter__value {
+  font-variant-numeric: tabular-nums;
+  min-width: 28px;
+}
+.meter--out .meter__value {
+  color: var(--danger);
+  font-weight: 700;
+}
+.topbar__actions .btn {
+  white-space: nowrap;
+}
+@media (max-width: 1280px) {
+  .meter__bar {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  .topbar__brand {
+    overflow: hidden;
+  }
+  .plan {
+    gap: 6px;
+    padding: 3px 3px 3px 8px;
+    margin-right: 0;
+  }
+}
+@media (max-width: 480px) {
+  .plan__name {
+    display: none;
+  }
+}
+
 /* ---------- side panels ---------- */
 
 .board,
@@ -360,6 +459,8 @@ code {
   text-overflow: ellipsis;
 }
 .dept-row__count {
+  flex-shrink: 0;
+  white-space: nowrap;
   font-size: 12px;
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
@@ -413,6 +514,61 @@ code {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.task-card__activity--error {
+  color: var(--danger);
+}
+.task-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.task-section__head .btn {
+  text-transform: none;
+  letter-spacing: 0;
+}
+/* Why a task failed, in front of its error line. */
+.chip {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--panel-2);
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+}
+.chip--plan-limit,
+.chip--too-big {
+  color: #a33d07;
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+}
+.chip--setup {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.resume-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line));
+  background: color-mix(in srgb, var(--warn) 8%, var(--panel));
+  border-radius: 10px;
+  font-size: 13px;
+}
+.resume-row {
+  flex-wrap: wrap; /* the message on one line, the buttons below it when the board is narrow */
+}
+.resume-row > span {
+  flex: 1 1 100%;
+}
+.resume-row .btn {
+  white-space: nowrap;
 }
 
 /* ---------- chat ---------- */
@@ -502,11 +658,26 @@ code {
 }
 .msg__bubble {
   max-width: 85%;
+  min-width: 0; /* lets a bubble shrink to the panel instead of growing to fit a long line */
   padding: 9px 12px;
   border-radius: 14px;
   font-size: 14px;
   line-height: 1.5;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* Code blocks in replies, e.g. a command to run: wrap long lines rather than overflow. */
+.msg__bubble pre {
+  margin: 6px 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(35, 38, 45, 0.06);
+  font-size: 12.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.msg__bubble code {
   overflow-wrap: anywhere;
 }
 .msg--boss .msg__bubble {
@@ -554,6 +725,50 @@ code {
 .chat__system--error {
   background: #fde8ef;
   color: #8c1d40;
+}
+.chat__events {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.chat__events-toggle {
+  border: 0;
+  background: none;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--ink-3);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.chat__events-toggle:hover {
+  color: var(--accent);
+}
+.chat__hide-events {
+  font-size: 14px;
+}
+.chat__hide-events[aria-pressed="true"] {
+  background: var(--panel-2);
+}
+.chat .tab,
+.chat .panel-header__actions .btn {
+  white-space: nowrap;
+}
+/* Sticks to the bottom of the scrolling list while the boss reads older messages. */
+.chat__new-pill {
+  position: sticky;
+  bottom: 0;
+  align-self: center;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--accent);
+  font-weight: 650;
+  font-size: 12.5px;
+  border-radius: 999px;
+  padding: 5px 12px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
 }
 .chat__activity {
   display: flex;
@@ -695,6 +910,16 @@ code {
 
 /* ---------- 3D overlays (rendered with drei <Html>) ---------- */
 
+/* --label-boost is set by CameraRig: labels grow back up to 1.6x when the camera is far out.
+   drei transforms the wrapper div, so the scale goes on our own element. */
+.bubble,
+.nameplate,
+.zone-sign,
+.zone-placeholder {
+  transform: scale(var(--label-boost, 1));
+  transform-origin: 50% 100%;
+}
+
 .bubble {
   display: flex;
   flex-direction: column;
@@ -738,6 +963,33 @@ code {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.bubble--idle {
+  opacity: 0.8;
+}
+/* Waiting for the boss's OK: a thick amber edge, gently pulsing unless motion is reduced. */
+.bubble--ask {
+  border: 2px solid var(--warn);
+}
+.bubble--ask .bubble__text {
+  color: var(--warn);
+  font-weight: 650;
+}
+.bubble--failed {
+  border-color: var(--danger);
+}
+.bubble--failed .bubble__text {
+  color: var(--danger);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bubble--ask {
+    animation: ask-pulse 1.6s ease-in-out infinite;
+  }
+}
+@keyframes ask-pulse {
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--warn) 28%, transparent), var(--shadow);
+  }
 }
 .bubble--manager .bubble__name {
   color: #3f6f68;
@@ -792,7 +1044,7 @@ code {
 
 .task-detail {
   position: absolute;
-  z-index: 40; /* above the 3D labels, which drei layers at z-index 0-30 */
+  z-index: 40; /* above the 3D scene, whose labels stack inside .scene-canvas */
   left: 16px;
   bottom: 16px;
   width: min(420px, calc(100% - 32px));
@@ -847,6 +1099,10 @@ code {
   color: var(--ink-2);
   font-size: 13px;
 }
+.task-detail__why {
+  margin: 0;
+  padding: 8px 16px 0;
+}
 .task-detail__footer {
   display: flex;
   gap: 8px;
@@ -855,6 +1111,59 @@ code {
 }
 .task-detail__footer:empty {
   display: none;
+}
+.panel-error {
+  position: absolute;
+  z-index: 60;
+  left: 16px;
+  bottom: 16px;
+  width: min(420px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 14px 16px;
+  background: var(--panel);
+  border-top: 4px solid var(--danger);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  font-size: 14px;
+}
+.panel-error--center {
+  left: 50%;
+  top: 50%;
+  bottom: auto;
+  transform: translate(-50%, -50%);
+}
+.panel-error code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* Follow-ups on a task: the same chat bubbles as the manager chat. */
+.task-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.task-thread__who {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.task-thread .msg__bubble p {
+  margin: 0 0 6px;
+}
+.task-thread .msg__bubble p:last-child {
+  margin: 0;
+}
+.task-detail__followup {
+  padding: 10px 16px 4px;
+}
+.task-detail__followup textarea {
+  min-height: 40px;
+  font-size: 13.5px;
 }
 .brief {
   white-space: pre-wrap;
@@ -887,6 +1196,29 @@ code {
 }
 
 /* A department's recurring tasks. */
+/* Chained recurring tasks, one row per chain: "Ideas ✅ → Plan ⏳ → Build · not yet". */
+.pipelines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.pipeline {
+  list-style: none;
+  margin: 0;
+  padding: 6px 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.pipeline__arrow {
+  margin-right: 8px;
+  color: var(--ink-3);
+}
 .schedule-list {
   list-style: none;
   margin: 0;
@@ -903,6 +1235,9 @@ code {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--panel-2);
+}
+.schedule--editing > .form {
+  flex: 1;
 }
 .schedule--paused {
   opacity: 0.6;
@@ -926,6 +1261,72 @@ code {
   display: flex;
   gap: 4px;
   flex-shrink: 0;
+}
+
+.command__warn {
+  color: var(--warn) !important;
+}
+.form select.inline-select {
+  display: inline-block;
+  width: auto;
+  font-size: 12px;
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+/* A worker waiting for the boss's OK to run a command. */
+.approval {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 2px solid var(--warn);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--warn) 7%, var(--panel));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.approval code {
+  display: block;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  overflow-wrap: anywhere;
+  font-size: 12.5px;
+}
+.approval .form__actions {
+  justify-content: flex-end;
+}
+.approval__urgent {
+  color: var(--warn);
+  font-weight: 700;
+}
+.pill--ask {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+}
+
+/* A department's permanent employees reuse the schedule rows. */
+.employee {
+  align-items: flex-start;
+}
+.employee .link {
+  font-size: 12px;
+  text-align: left;
+}
+.employee__edit {
+  flex: 1;
+}
+.employee__fire {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 13px;
+}
+.employee__fire .form__actions {
+  flex-wrap: wrap;
 }
 
 .prose {
@@ -1130,22 +1531,49 @@ code {
   margin-top: 0;
 }
 
-.toast {
+/* Up to three toasts stack above each other, newest at the bottom. */
+.toasts {
   position: fixed;
   left: 50%;
   bottom: 24px;
   transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 32px);
+}
+.toast {
   background: var(--ink);
   color: white;
   padding: 10px 16px;
+  border: none;
   border-radius: 12px;
+  font: inherit;
   font-size: 14px;
   box-shadow: var(--shadow);
-  z-index: 200;
-  max-width: calc(100vw - 32px);
+  max-width: 100%;
 }
 .toast--error {
   background: var(--danger);
+}
+.toast--link {
+  cursor: pointer;
+  text-align: left;
+}
+.toast--link:hover {
+  filter: brightness(1.15);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .hide-lg {

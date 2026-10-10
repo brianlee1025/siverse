@@ -4,13 +4,24 @@ import { createServer } from "node:http";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { WebSocketServer, type WebSocket } from "ws";
 import { z } from "zod";
-import type { ServerMessage } from "../shared/types";
-import { MAX_HEADCOUNT } from "../shared/types";
+import type { Department, ServerMessage } from "../shared/types";
+import { EFFORT_LEVELS, MAX_HEADCOUNT } from "../shared/types";
 import { forgetClaudeCli } from "./claudeCli";
+import {
+  addCommand,
+  answerApproval,
+  findCommand,
+  jobStatus,
+  reapproveCommand,
+  removeCommand,
+  startJob,
+  updateCommand,
+} from "./commands";
 import { handleHookEvent, sweepClaudeCode } from "./claudeCode";
 import { HOOK_PATH, install as installHooks, uninstall as uninstallHooks } from "./claudeCodeHooks";
 import { DIST_DIR, HOST, IS_PRODUCTION, PORT } from "./config";
 import { DriveError, listDrive, readDriveFile } from "./drive";
+import { fireEmployee, hireEmployee, updateEmployee } from "./employees";
 import { handleBossMessage, loadManagerHistory, officeStatus, startNewDay } from "./manager";
 import {
   OfficeError,
@@ -18,6 +29,7 @@ import {
   cancelTask,
   closeDepartment,
   createDepartment,
+  followUpTask,
   retryTask,
   schedule,
   updateDepartment,
@@ -31,9 +43,21 @@ import {
   startScheduleClock,
   updateSchedule,
 } from "./schedules";
+import { checkUsageNow, refreshPlan, startPlanWatch } from "./planUsage";
 import { isLocalRequest, localOnly } from "./security";
 import { aiOfficeEnabled, loadSettings, updateSettings } from "./settings";
-import { changed, findDepartment, findTask, forgetHooksCheck, loadState, onChange, saveNow, snapshot } from "./store";
+import {
+  changed,
+  findDepartment,
+  findEmployee,
+  findTask,
+  forgetHooksCheck,
+  loadState,
+  onChange,
+  saveNow,
+  snapshot,
+  state,
+} from "./store";
 
 loadSettings();
 loadState();
@@ -65,30 +89,83 @@ const SettingsBody = z.object({
   managerModel: z.string().max(80).optional(),
   workerModel: z.string().max(80).optional(),
 });
-const DepartmentBody = z.object({
+// No defaults here: a PATCH must only change the fields it sends.
+const DepartmentPatch = z.object({
   name: z.string().min(1).max(40),
+  genre: z.string().max(120),
+  description: z.string().max(2000),
+  headcount: z.number().int().min(1).max(MAX_HEADCOUNT),
+  webAccess: z.boolean(),
+  codeAccess: z.boolean(), // only the boss's department window sends this
+  // Like codeAccess, only the department window sends these. null = the office default.
+  model: z.string().max(80).nullable(),
+  effort: z.enum(EFFORT_LEVELS).nullable(),
+}).partial();
+const DepartmentBody = DepartmentPatch.required({ name: true }).extend({
   genre: z.string().max(120).default(""),
   description: z.string().max(2000).default(""),
-  headcount: z.number().int().min(1).max(MAX_HEADCOUNT).optional(),
-  webAccess: z.boolean().optional(),
 });
+// "employee" is an employee's id or name. Leave it out (or empty) for whoever is free.
+const EmployeeRef = z.string().max(80);
 const TaskBody = z.object({
   title: z.string().min(1).max(120),
   brief: z.string().min(1).max(8000),
+  employee: EmployeeRef.optional(),
+});
+const FollowUpBody = z.object({ text: z.string().max(8000).optional() });
+const CommandBody = z.object({
+  name: z.string().min(1).max(40),
+  description: z.string().max(1000).default(""),
+  program: z.string().min(1).max(200),
+  script: z.string().min(1).max(400),
+  askFirst: z.enum(["always", "with-args", "never"]).default("always"),
+  secrets: z.array(z.string().max(64)).max(20).default([]),
+});
+const CommandPatch = z
+  .object({
+    name: z.string().min(1).max(40),
+    description: z.string().max(1000),
+    program: z.string().min(1).max(200),
+    script: z.string().min(1).max(400),
+    askFirst: z.enum(["always", "with-args", "never"]),
+    secrets: z.array(z.string().max(64)).max(20),
+  })
+  .partial();
+const ApprovalBody = z.object({ approve: z.boolean() });
+const WorkerAuth = z.object({ task: z.string().max(40), token: z.string().max(100) });
+const WorkerRunBody = WorkerAuth.extend({
+  name: z.string().max(60),
+  args: z.array(z.string().max(500)).max(30),
+  reason: z.string().max(2000).default(""),
+});
+const EmployeeBody = z.object({
+  name: z.string().max(30).optional(),
+  focus: z.string().min(1).max(400),
 });
 const Cadence = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("daily"), time: z.string().max(5) }),
   z.object({ kind: z.literal("weekly"), day: z.number().int().min(0).max(6), time: z.string().max(5) }),
   z.object({ kind: z.literal("interval"), hours: z.number().int().min(1).max(24 * 28) }),
+  z.object({ kind: z.literal("after"), scheduleId: z.string().min(1).max(60) }),
 ]);
 const ScheduleBody = z.object({
   title: z.string().min(1).max(120),
   brief: z.string().min(1).max(8000),
   cadence: Cadence,
   enabled: z.boolean().optional(),
+  employee: EmployeeRef.nullable().optional(),
 });
 
 const param = (req: Request, name: string) => String(req.params[name]);
+
+/** An employee reference from a request: undefined = not given, null = whoever is free. */
+function employeeIn(department: Department, ref: string | null | undefined): string | null | undefined {
+  if (ref === undefined) return undefined;
+  if (ref === null || !ref.trim()) return null;
+  const employee = findEmployee(ref, department.id);
+  if (!employee) throw new OfficeError(`Nobody called "${ref}" works in ${department.name}.`);
+  return employee.id;
+}
 
 /** Routes that run Siverse's own (API-billed) agents only work while the AI office is on. */
 function requireAiOffice(_req: Request, res: Response, next: NextFunction) {
@@ -119,9 +196,16 @@ app.get("/api/office/status", requireAiOffice, (_req, res) => {
 app.put("/api/settings", (req, res) => {
   updateSettings(SettingsBody.parse(req.body));
   forgetClaudeCli(); // look for the Claude Code CLI again, e.g. after installing it
+  refreshPlan().catch(() => {});
   changed(); // push the new settings to every open browser
   schedule(); // A newly added key can start queued work.
   res.json(snapshot().settings);
+});
+
+// Runs a tiny Claude Code request to read the plan's latest usage. The answer arrives in the snapshot.
+app.post("/api/plan/check", (_req, res) => {
+  checkUsageNow().catch((error) => console.error("[plan usage]", error instanceof Error ? error.message : error));
+  res.status(202).json({ ok: true });
 });
 
 app.post("/api/claude-code/connect", (_req, res) => {
@@ -150,7 +234,7 @@ app.post("/api/departments", requireAiOffice, (req, res) => {
 app.patch("/api/departments/:id", requireAiOffice, (req, res) => {
   const department = findDepartment(param(req, "id"));
   if (!department) return void res.status(404).json({ error: "No such department." });
-  updateDepartment(department, DepartmentBody.partial().parse(req.body));
+  updateDepartment(department, DepartmentPatch.parse(req.body));
   res.json(department);
 });
 
@@ -164,14 +248,36 @@ app.delete("/api/departments/:id", requireAiOffice, (req, res) => {
 app.post("/api/departments/:id/tasks", requireAiOffice, (req, res) => {
   const department = findDepartment(param(req, "id"));
   if (!department) return void res.status(404).json({ error: "No such department." });
-  const { title, brief } = TaskBody.parse(req.body);
-  res.status(201).json(assignTask(department, title, brief));
+  const { title, brief, employee } = TaskBody.parse(req.body);
+  res.status(201).json(assignTask(department, title, brief, { employeeId: employeeIn(department, employee) ?? undefined }));
+});
+
+app.post("/api/departments/:id/employees", requireAiOffice, (req, res) => {
+  const department = findDepartment(param(req, "id"));
+  if (!department) return void res.status(404).json({ error: "No such department." });
+  res.status(201).json(hireEmployee(department, EmployeeBody.parse(req.body)));
+});
+
+app.patch("/api/employees/:id", requireAiOffice, (req, res) => {
+  const employee = findEmployee(param(req, "id"));
+  if (!employee) return void res.status(404).json({ error: "No such employee." });
+  updateEmployee(employee, EmployeeBody.partial().parse(req.body));
+  res.json(employee);
+});
+
+// ?deleteNotes=true also deletes their notes; otherwise they stay in data/memory/employees/<id>.
+app.delete("/api/employees/:id", requireAiOffice, (req, res) => {
+  const employee = findEmployee(param(req, "id"));
+  if (!employee) return void res.status(404).json({ error: "No such employee." });
+  fireEmployee(employee, { deleteNotes: req.query.deleteNotes === "true" });
+  res.json({ ok: true, name: employee.name });
 });
 
 app.post("/api/departments/:id/schedules", requireAiOffice, (req, res) => {
   const department = findDepartment(param(req, "id"));
   if (!department) return void res.status(404).json({ error: "No such department." });
-  res.status(201).json(createSchedule(department, ScheduleBody.parse(req.body)));
+  const { employee, ...input } = ScheduleBody.parse(req.body);
+  res.status(201).json(createSchedule(department, { ...input, employeeId: employeeIn(department, employee) }));
 });
 
 app.post("/api/departments/:id/schedules/notes-tidy-up", requireAiOffice, (req, res) => {
@@ -183,7 +289,9 @@ app.post("/api/departments/:id/schedules/notes-tidy-up", requireAiOffice, (req, 
 app.patch("/api/schedules/:id", requireAiOffice, (req, res) => {
   const schedule = findSchedule(param(req, "id"));
   if (!schedule) return void res.status(404).json({ error: "No such schedule." });
-  updateSchedule(schedule, ScheduleBody.partial().parse(req.body));
+  const { employee, ...patch } = ScheduleBody.partial().parse(req.body);
+  const department = state.departments.find((d) => d.id === schedule.departmentId);
+  updateSchedule(schedule, { ...patch, employeeId: department ? employeeIn(department, employee) : undefined });
   res.json(schedule);
 });
 
@@ -203,8 +311,20 @@ app.post("/api/schedules/:id/run", requireAiOffice, (req, res) => {
 app.get("/api/tasks/:id", (req, res) => {
   const task = findTask(param(req, "id"));
   if (!task) return void res.status(404).json({ error: "No such task." });
-  const { id, title, status, workerName, summary, outputs, error, activity, scheduleId } = task;
-  res.json({ id, title, status, worker: workerName, summary, outputs, error, scheduleId, recent_activity: activity.slice(-4) });
+  const { id, title, status, workerName, employeeId, summary, outputs, error, activity, scheduleId } = task;
+  res.json({
+    id,
+    title,
+    status,
+    worker: workerName,
+    permanent_employee: Boolean(employeeId),
+    summary,
+    outputs,
+    error,
+    scheduleId,
+    conversation: task.thread?.slice(-6).map((m) => ({ from: m.role, text: m.text.slice(0, 1500) })),
+    recent_activity: activity.slice(-4),
+  });
 });
 
 app.post("/api/tasks/:id/cancel", (req, res) => {
@@ -218,6 +338,60 @@ app.post("/api/tasks/:id/retry", requireAiOffice, (req, res) => {
   const task = findTask(param(req, "id"));
   if (!task) return void res.status(404).json({ error: "No such task." });
   res.status(201).json(retryTask(task));
+});
+
+// Approved commands. Only the boss sets these up, from the department window: neither the manager
+// nor the workers have a tool that reaches these routes.
+app.post("/api/departments/:id/commands", requireAiOffice, (req, res) => {
+  const department = findDepartment(param(req, "id"));
+  if (!department) return void res.status(404).json({ error: "No such department." });
+  res.status(201).json(addCommand(department, CommandBody.parse(req.body)));
+});
+
+app.patch("/api/commands/:id", requireAiOffice, (req, res) => {
+  const command = findCommand(param(req, "id"));
+  if (!command) return void res.status(404).json({ error: "No such command." });
+  updateCommand(command, CommandPatch.parse(req.body));
+  res.json(command);
+});
+
+app.post("/api/commands/:id/reapprove", requireAiOffice, (req, res) => {
+  const command = findCommand(param(req, "id"));
+  if (!command) return void res.status(404).json({ error: "No such command." });
+  reapproveCommand(command);
+  res.json(command);
+});
+
+app.delete("/api/commands/:id", requireAiOffice, (req, res) => {
+  const command = findCommand(param(req, "id"));
+  if (!command) return void res.status(404).json({ error: "No such command." });
+  removeCommand(command);
+  res.json({ ok: true });
+});
+
+// The boss's answer when a worker asks to run a command.
+app.post("/api/tasks/:id/approval", (req, res) => {
+  const task = findTask(param(req, "id"));
+  if (!task) return void res.status(404).json({ error: "No such task." });
+  answerApproval(task, ApprovalBody.parse(req.body).approve);
+  res.json({ ok: true });
+});
+
+// For Claude Code workers' run_command (scripts/siverse-worker-mcp.mjs), with their run's token.
+app.post("/api/worker/commands", (req, res) => {
+  const { task, token, name, args, reason } = WorkerRunBody.parse(req.body);
+  res.status(202).json({ job: startJob(task, token, name, args, reason) });
+});
+
+app.post("/api/worker/jobs/:id", (req, res) => {
+  const { task, token } = WorkerAuth.parse(req.body);
+  res.json(jobStatus(task, token, param(req, "id")));
+});
+
+app.post("/api/tasks/:id/follow-up", requireAiOffice, (req, res) => {
+  const task = findTask(param(req, "id"));
+  if (!task) return void res.status(404).json({ error: "No such task." });
+  res.status(202).json(followUpTask(task, FollowUpBody.parse(req.body ?? {}).text));
 });
 
 app.get("/api/files", (req, res) => {
@@ -288,6 +462,7 @@ server.listen(PORT, HOST, () => {
   console.log(`\n  🏢 Siverse server on http://${HOST}:${PORT}  →  open ${url}\n`);
   schedule();
   startScheduleClock();
+  startPlanWatch();
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

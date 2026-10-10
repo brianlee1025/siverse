@@ -1,16 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { ChatMessage, ChatRole, Department, FeedItem, Schedule, Snapshot, Task } from "../shared/types";
+import type { ApprovedCommand, ChatMessage, ChatRole, Department, Employee, FeedItem, Schedule, Snapshot, Task } from "../shared/types";
 import { isClaudeCode } from "../shared/types";
 import { isInstalled as claudeCodeHooksInstalled } from "./claudeCodeHooks";
 import { DATA_DIR, MAX_CONCURRENT_WORKERS } from "./config";
+import { commandViews } from "./commands";
+import { planView } from "./planUsage";
 import { settingsView } from "./settings";
 
 interface PersistedState {
   departments: Department[];
+  employees: Employee[];
   tasks: Task[];
   schedules: Schedule[];
+  commands: ApprovedCommand[];
   chat: ChatMessage[];
 }
 
@@ -18,7 +22,7 @@ const STATE_FILE = path.join(DATA_DIR, "state.json");
 const SNAPSHOT_FINISHED_TASKS = 60;
 const SNAPSHOT_CHAT = 200;
 
-export const state: PersistedState = { departments: [], tasks: [], schedules: [], chat: [] };
+export const state: PersistedState = { departments: [], employees: [], tasks: [], schedules: [], commands: [], chat: [] };
 export const managerStatus = { busy: false, activity: null as string | null };
 
 // What your Claude Code sessions are doing. Kept in memory only: it mirrors live sessions,
@@ -43,8 +47,11 @@ export function loadState() {
     return; // First run.
   }
   state.schedules ??= []; // Saved before schedules existed.
+  state.employees ??= []; // Saved before permanent employees existed.
+  state.commands ??= []; // Saved before approved commands existed.
   // Anything mid-flight when the server stopped can't be resumed.
   for (const task of state.tasks) {
+    delete task.approval; // Nobody is waiting for an answer any more.
     if (task.status === "working") {
       task.status = "failed";
       task.error = "Interrupted because the server restarted. Ask the manager to reassign it.";
@@ -94,12 +101,15 @@ export function snapshot(): Snapshot {
   return {
     settings: settingsView(),
     departments: state.departments,
+    employees: state.employees,
     tasks: [...finished, ...active],
     schedules: state.schedules,
+    commands: commandViews(),
     chat: state.chat.slice(-SNAPSHOT_CHAT),
     manager: { ...managerStatus },
     maxConcurrentWorkers: MAX_CONCURRENT_WORKERS,
     claudeCode: { hooksInstalled: hooksInstalled(), ...claudeCodeLive },
+    plan: planView(),
   };
 }
 
@@ -134,6 +144,14 @@ export function findDepartment(ref: string): Department | undefined {
   const needle = ref.trim().toLowerCase();
   return state.departments.find(
     (d) => !isClaudeCode(d) && (d.id === needle || d.name.toLowerCase() === needle || d.id === slugify(ref)),
+  );
+}
+
+/** Finds a permanent employee by id or case-insensitive name, optionally within one department. */
+export function findEmployee(ref: string, departmentId?: string): Employee | undefined {
+  const needle = ref.trim().toLowerCase();
+  return state.employees.find(
+    (e) => (!departmentId || e.departmentId === departmentId) && (e.id === needle || e.name.toLowerCase() === needle),
   );
 }
 

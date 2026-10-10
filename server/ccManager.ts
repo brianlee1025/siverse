@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { shorten } from "./claude";
-import { ClaudeCliError, resultError, runClaudeCli, type ContentBlock, type StreamEvent } from "./claudeCli";
+import { ClaudeCliError, protectedFileRules, resultError, runClaudeCli, type ContentBlock, type StreamEvent } from "./claudeCli";
 import { COMPANY_MEMORY_DIR, DATA_DIR, PORT } from "./config";
 import { getSettings } from "./settings";
 import { addChat, changed, managerStatus } from "./store";
@@ -62,11 +62,19 @@ function describeTool(name: string): string | null {
       return "Handing out a task";
     case "cancel_task":
       return "Cancelling a task";
+    case "hire_employee":
+      return "Hiring";
+    case "update_employee":
+      return "Briefing an employee";
+    case "fire_employee":
+      return "Letting someone go";
     case "create_schedule":
     case "update_schedule":
     case "delete_schedule":
     case "run_schedule_now":
       return "Planning recurring work";
+    case "follow_up_task":
+      return "Following up on a task";
     case "office_status":
     case "get_task_result":
     case "read_file":
@@ -104,6 +112,7 @@ export async function handleBossMessageClaudeCode(text: string, officeStatus: st
         "--strict-mcp-config",
         "--allowedTools", "mcp__siverse", "Read", "Glob", "Grep", "Write", "Edit",
         "--disallowedTools", "Bash", "BashOutput", "KillShell", "Task", "NotebookEdit", "WebSearch", "WebFetch", "SlashCommand",
+        ...protectedFileRules(),
         "--add-dir", COMPANY_MEMORY_DIR,
         ...(resume ? ["--resume", resume] : []),
       ],

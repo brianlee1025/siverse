@@ -3,6 +3,7 @@ import Markdown from "react-markdown";
 import type { ChatMessage, Snapshot } from "../../shared/types";
 import { api, useStore } from "../store";
 import { claudeCodeIsLive } from "../claudeCode";
+import { useDraft } from "../drafts";
 import { ClaudeCodeFeed } from "./ClaudeCodeFeed";
 
 const SUGGESTIONS = [
@@ -11,8 +12,45 @@ const SUGGESTIONS = [
   "Have Marketing write a launch announcement and 3 social posts for our new app",
 ];
 
+const HIDE_EVENTS_KEY = "siverse.hideOfficeEvents";
+// Approval requests start with this (server/commands.ts:288); they stay visible when events are hidden.
+const APPROVAL_PREFIX = "✋";
+const GROUP_MIN = 3; // this many office events in a row fold into one line
+const BOTTOM_SLACK_PX = 40;
+
+type ChatItem = { kind: "message"; message: ChatMessage } | { kind: "events"; messages: ChatMessage[] };
+
+/** Folds runs of consecutive office events so the boss's own conversation stays readable. */
+function groupChat(chat: ChatMessage[], hideEvents: boolean): ChatItem[] {
+  const items: ChatItem[] = [];
+  let run: ChatMessage[] = [];
+  const flush = () => {
+    if (run.length >= GROUP_MIN) items.push({ kind: "events", messages: run });
+    else for (const message of run) items.push({ kind: "message", message });
+    run = [];
+  };
+  for (const message of chat) {
+    if (message.role !== "system") {
+      flush();
+      items.push({ kind: "message", message });
+    } else if (!hideEvents || message.tone === "error" || message.text.startsWith(APPROVAL_PREFIX)) {
+      run.push(message);
+    }
+  }
+  flush();
+  return items;
+}
+
+function loadHideEvents(): boolean {
+  try {
+    return localStorage.getItem(HIDE_EVENTS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft, clearDraft] = useDraft("chat");
   const [sending, setSending] = useState(false);
   const connected = useStore((s) => s.connected);
   const openModal = useStore((s) => s.openModal);
@@ -26,11 +64,49 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
   const ready = snapshot.settings.ready;
   const onClaudeCode = snapshot.settings.engine === "claude-code";
   const last = snapshot.chat.at(-1);
+  const [hideEvents, setHideEvents] = useState(loadHideEvents);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const atBottom = useRef(true);
+  const [newBelow, setNewBelow] = useState(false);
 
-  // Keep the newest message in view as replies stream in.
+  const scrollDown = () => {
+    // Instant, not smooth: a smooth scroll fires scroll events part-way, which would read as "scrolled up".
+    list.current?.scrollTo({ top: list.current.scrollHeight });
+    atBottom.current = true;
+    setNewBelow(false);
+  };
+
+  // Follow new messages only if the boss is already at the bottom (or just sent one themselves).
   useEffect(() => {
-    list.current?.scrollTo({ top: list.current.scrollHeight, behavior: "smooth" });
+    if (atBottom.current || last?.role === "boss") scrollDown();
+    else setNewBelow(true);
   }, [snapshot.chat.length, last?.text, busy]);
+
+  const onScroll = () => {
+    const el = list.current;
+    if (!el) return;
+    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK_PX;
+    if (atBottom.current) setNewBelow(false);
+  };
+
+  const toggleHideEvents = (hide: boolean) => {
+    setHideEvents(hide);
+    try {
+      localStorage.setItem(HIDE_EVENTS_KEY, hide ? "1" : "0");
+    } catch {
+      // Not saved; it still applies for this visit.
+    }
+  };
+
+  const toggleGroup = (id: string) =>
+    setExpanded((open) => {
+      const next = new Set(open);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const items = groupChat(snapshot.chat, hideEvents);
 
   const send = async (text: string) => {
     const trimmed = text.trim();
@@ -38,7 +114,7 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
     setSending(true);
     try {
       await api("POST", "/api/chat", { text: trimmed });
-      setDraft("");
+      clearDraft();
     } finally {
       setSending(false);
     }
@@ -64,7 +140,7 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
 
   const managerView = (
     <>
-      <div className="chat__messages" ref={list}>
+      <div className="chat__messages" ref={list} onScroll={onScroll}>
         {snapshot.chat.length === 0 && (
           <div className="chat__welcome">
             <h3>Welcome to your office, boss.</h3>
@@ -81,9 +157,18 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
             </div>
           </div>
         )}
-        {snapshot.chat.map((m) => (
-          <Message key={m.id} message={m} />
-        ))}
+        {items.map((item) =>
+          item.kind === "message" ? (
+            <Message key={item.message.id} message={item.message} />
+          ) : (
+            <EventGroup
+              key={item.messages[0].id}
+              messages={item.messages}
+              open={expanded.has(item.messages[0].id)}
+              onToggle={() => toggleGroup(item.messages[0].id)}
+            />
+          ),
+        )}
         {busy && (
           <div className="chat__activity">
             <span className="dots" aria-hidden>
@@ -93,6 +178,11 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
             </span>
             {activity ?? "Thinking"}
           </div>
+        )}
+        {newBelow && (
+          <button className="chat__new-pill" onClick={scrollDown}>
+            ↓ New messages
+          </button>
         )}
       </div>
 
@@ -142,6 +232,18 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
         )}
         <div className="panel-header__actions">
           {tab === "manager" && (
+            // An icon, not a labelled checkbox: with text, the header no longer fits on one line.
+            <button
+              className="icon-btn chat__hide-events"
+              aria-pressed={hideEvents}
+              onClick={() => toggleHideEvents(!hideEvents)}
+              title={hideEvents ? "Show office events" : "Hide office events (approvals and errors stay)"}
+              aria-label="Hide office events"
+            >
+              {hideEvents ? "🔕" : "🔔"}
+            </button>
+          )}
+          {tab === "manager" && (
             <button className="btn btn--ghost btn--sm" onClick={newDay} disabled={busy} title="Clear the conversation">
               ☀️ New day
             </button>
@@ -161,6 +263,21 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
         managerView
       )}
     </aside>
+  );
+}
+
+/** A run of office events: the newest in full, the rest behind a toggle. */
+function EventGroup({ messages, open, onToggle }: { messages: ChatMessage[]; open: boolean; onToggle: () => void }) {
+  const newest = messages[messages.length - 1];
+  const earlier = messages.length - 1;
+  return (
+    <div className="chat__events">
+      {open && messages.slice(0, -1).map((m) => <Message key={m.id} message={m} />)}
+      <Message message={newest} />
+      <button className="chat__events-toggle" onClick={onToggle} aria-expanded={open}>
+        {open ? "Show less" : `+${earlier} earlier office event${earlier === 1 ? "" : "s"}`}
+      </button>
+    </div>
   );
 }
 

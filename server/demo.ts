@@ -1,6 +1,7 @@
 import type { Department, Task } from "../shared/types";
 import { writeDepartmentFile } from "./drive";
 import { changed } from "./store";
+import { taskBrief } from "./taskBrief";
 
 // Demo mode (SIVERSE_DEMO=1, see config.ts): workers act out a task without calling the Claude API,
 // so you can work on the office scene and UI without an API key or spending anything.
@@ -31,9 +32,11 @@ export async function runDemoWorker(task: Task, department: Department, signal: 
   const file = writeDepartmentFile(
     department.id,
     `demo/${task.id}.md`,
-    `# ${task.title}\n\n_Demo mode: no API call was made._\n\n## Brief\n\n${task.brief}\n`,
+    `# ${task.title}\n\n_Demo mode: no API call was made._\n\n## What the worker was told\n\n${taskBrief(task)}\n`,
   );
-  task.outputs.push(file);
+  if (!task.outputs.includes(file)) task.outputs.push(file);
   changed();
-  return `Demo run: saved a placeholder to ${file}.`;
+  return task.thread
+    ? `Demo run: followed up, and updated the placeholder in ${file}.`
+    : `Demo run: saved a placeholder to ${file}.`;
 }

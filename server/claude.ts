@@ -1,10 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { BetaContentBlock, BetaMessage, BetaToolRunnerParams } from "@anthropic-ai/sdk/resources/beta/messages";
+import type { Effort } from "../shared/types";
 
 // Per-model request settings. Models differ in what they accept (thinking modes, effort,
 // server-side fallbacks), so unknown model ids get the plainest request that works everywhere.
-
-type Effort = "low" | "medium" | "high";
 
 // Models that return short progress notes between tool calls with display: "updates".
 // We show those notes as the speech bubbles above workers' heads.
@@ -18,6 +17,8 @@ const ADAPTIVE_THINKING_MODELS = new Set([
   "claude-sonnet-5",
   "claude-sonnet-4-6",
 ]);
+// Adaptive-thinking models from before "xhigh" existed: they get "high" instead.
+const NO_XHIGH_MODELS = new Set(["claude-opus-4-6", "claude-sonnet-4-6"]);
 // Models that accept `fallbacks: "default"`: if a safety classifier declines a request, the API
 // retries it on Anthropic's recommended fallback model instead of returning a refusal.
 const DEFAULT_FALLBACK_MODELS = new Set(["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"]);
@@ -35,7 +36,9 @@ export function modelParams(model: string, effort: Effort): Pick<
   } else if (ADAPTIVE_THINKING_MODELS.has(model)) {
     params.thinking = { type: "adaptive" };
   }
-  if (ADAPTIVE_THINKING_MODELS.has(model)) params.output_config = { effort };
+  if (ADAPTIVE_THINKING_MODELS.has(model)) {
+    params.output_config = { effort: effort === "xhigh" && NO_XHIGH_MODELS.has(model) ? "high" : effort };
+  }
   if (DEFAULT_FALLBACK_MODELS.has(model)) {
     params.fallbacks = "default";
     betas.push("server-side-fallback-2026-07-01");

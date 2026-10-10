@@ -24,7 +24,8 @@ const cadence = {
 const TOOLS = [
   {
     name: "office_status",
-    description: "The live state of the office: departments, their headcount and load, recent tasks and schedules.",
+    description:
+      "The live state of the office: departments, their permanent employees, headcount and load, recent tasks and schedules.",
     inputSchema: { type: "object", properties: {} },
     call: () => get("/api/office/status").then((r) => r.status),
   },
@@ -90,11 +91,19 @@ const TOOLS = [
         department: { type: "string", description: "Department id or name" },
         title: { type: "string", description: "Short task title, under 80 characters" },
         brief: { type: "string", description: "Self-contained brief: goal, audience, format, length, constraints" },
+        employee: {
+          type: "string",
+          description: "A permanent employee's name, for work in their area. Omit for whoever is free.",
+        },
       },
       required: ["department", "title", "brief"],
     },
     call: (a) =>
-      send("POST", `/api/departments/${encodeURIComponent(a.department)}/tasks`, { title: a.title, brief: a.brief }).then(
+      send("POST", `/api/departments/${encodeURIComponent(a.department)}/tasks`, {
+        title: a.title,
+        brief: a.brief,
+        employee: a.employee,
+      }).then(
         (t) => `Assigned ${t.id} (${t.status === "working" ? "a worker started on it" : "queued"}).`,
       ),
   },
@@ -103,6 +112,23 @@ const TOOLS = [
     description: "Cancel a queued or in-progress task.",
     inputSchema: { type: "object", properties: { task_id: { type: "string" } }, required: ["task_id"] },
     call: (a) => send("POST", `/api/tasks/${encodeURIComponent(a.task_id)}/cancel`).then(() => `Cancelling ${a.task_id}.`),
+  },
+  {
+    name: "follow_up_task",
+    description:
+      "Send a finished (or failed) task back to the same worker with a follow-up: more work, changes or fixes. They carry on with the conversation so far and the files they already made.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string" },
+        message: { type: "string", description: "What they should do next, as a self-contained instruction" },
+      },
+      required: ["task_id", "message"],
+    },
+    call: (a) =>
+      send("POST", `/api/tasks/${encodeURIComponent(a.task_id)}/follow-up`, { text: a.message }).then(
+        (t) => `Sent ${t.id} back to ${t.workerName ?? "the department"} (${t.status === "working" ? "they started on it" : "queued"}).`,
+      ),
   },
   {
     name: "get_task_result",
@@ -138,6 +164,7 @@ const TOOLS = [
         title: { type: "string", description: "Short title, under 80 characters" },
         brief: { type: "string", description: "Self-contained brief for every run" },
         cadence,
+        employee: { type: "string", description: "A permanent employee who always does it. Omit for whoever is free." },
       },
       required: ["department", "title", "brief", "cadence"],
     },
@@ -146,11 +173,13 @@ const TOOLS = [
         title: a.title,
         brief: a.brief,
         cadence: a.cadence,
+        employee: a.employee,
       }).then((s) => `Created schedule ${s.id}. First run ${new Date(s.nextRunAt).toLocaleString()}.`),
   },
   {
     name: "update_schedule",
-    description: "Change a schedule's title, brief or timetable, or pause (enabled: false) and resume it.",
+    description:
+      'Change a schedule\'s title, brief, timetable or employee, or pause (enabled: false) and resume it. employee: "" gives it to whoever is free.',
     inputSchema: {
       type: "object",
       properties: {
@@ -159,6 +188,7 @@ const TOOLS = [
         brief: { type: "string" },
         cadence,
         enabled: { type: "boolean" },
+        employee: { type: "string" },
       },
       required: ["schedule_id"],
     },
@@ -168,6 +198,7 @@ const TOOLS = [
         brief: a.brief,
         cadence: a.cadence,
         enabled: a.enabled,
+        employee: a.employee,
       }).then((s) => `Updated ${s.id}. ${s.enabled ? `Next run ${new Date(s.nextRunAt).toLocaleString()}.` : "Paused."}`),
   },
   {
@@ -182,6 +213,54 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { schedule_id: { type: "string" } }, required: ["schedule_id"] },
     call: (a) =>
       send("POST", `/api/schedules/${encodeURIComponent(a.schedule_id)}/run`).then((t) => `Started ${t.id}.`),
+  },
+  {
+    name: "hire_employee",
+    description:
+      "Hire a permanent employee into a department. They take a desk of their own (one is added if needed), focus on one area of the department's work, and keep their own notes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        department: { type: "string", description: "Department id or name" },
+        focus: { type: "string", description: 'Their area, e.g. "competitor pricing in Europe" or "the onboarding emails"' },
+        name: { type: "string", description: "First name. Omit to pick one." },
+      },
+      required: ["department", "focus"],
+    },
+    call: (a) =>
+      send("POST", `/api/departments/${encodeURIComponent(a.department)}/employees`, { focus: a.focus, name: a.name }).then(
+        (e) => `Hired ${e.name} [id: ${e.id}], at desk ${e.deskIndex + 1}.`,
+      ),
+  },
+  {
+    name: "update_employee",
+    description: "Change a permanent employee's area of focus or name.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        employee: { type: "string", description: "Employee name or id" },
+        focus: { type: "string" },
+        name: { type: "string" },
+      },
+      required: ["employee"],
+    },
+    call: (a) =>
+      send("PATCH", `/api/employees/${encodeURIComponent(a.employee)}`, { focus: a.focus, name: a.name }).then(
+        (e) => `Updated ${e.name}.`,
+      ),
+  },
+  {
+    name: "fire_employee",
+    description:
+      "Let a permanent employee go. Their desk stays for temps, work waiting for them goes to whoever is free, and their notes are kept.",
+    inputSchema: {
+      type: "object",
+      properties: { employee: { type: "string", description: "Employee name or id" } },
+      required: ["employee"],
+    },
+    // Never deleteNotes: only the boss can delete an employee's notes, from the UI.
+    call: (a) =>
+      send("DELETE", `/api/employees/${encodeURIComponent(a.employee)}`).then((r) => `${r.name} has left. Their notes are kept.`),
   },
 ];
 

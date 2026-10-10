@@ -19,6 +19,8 @@ export const DRIVE_DIR = path.join(ROOT_DIR, "workspace");
 export const COMPANY_MEMORY_DIR = path.join(DATA_DIR, "memory", "company");
 export const departmentMemoryDir = (departmentId: string) =>
   path.join(DATA_DIR, "memory", "departments", departmentId);
+// Every permanent employee also keeps their own notes: their area, their history, their lessons.
+export const employeeMemoryDir = (employeeId: string) => path.join(DATA_DIR, "memory", "employees", employeeId);
 
 export const PORT = Number(process.env.PORT ?? 8787);
 export const HOST = process.env.HOST ?? "127.0.0.1";
