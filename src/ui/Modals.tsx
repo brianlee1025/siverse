@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   EFFORT_LEVELS,
   MAX_HEADCOUNT,
@@ -273,17 +273,26 @@ function DepartmentModal({
   const [taskTitle, setTaskTitle, clearTaskTitle] = useDraft(department ? `task:${department.id}:title` : null);
   const [taskBrief, setTaskBrief, clearTaskBrief] = useDraft(department ? `task:${department.id}:brief` : null);
   const [taskEmployee, setTaskEmployee] = useState("");
+  // The values the window opened with, to tell what the boss changed.
+  const opened = useRef({ name, genre, description, headcount, webAccess, codeAccess, model, effort });
   // Hiring can add a desk while this window is open; keep the field in step with the server.
   const desks = department?.headcount;
   useEffect(() => {
-    if (desks) setHeadcount(desks);
+    if (!desks) return;
+    setHeadcount(desks);
+    opened.current.headcount = desks; // a hire isn't the boss's change
   }, [desks]);
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
-    const body = { name, genre, description, headcount, webAccess, codeAccess, model: model || null, effort: effort || null };
-    if (department) await api("PATCH", `/api/departments/${department.id}`, body);
-    else await api("POST", "/api/departments", body);
+    const current = { name, genre, description, headcount, webAccess, codeAccess, model, effort };
+    const body = { ...current, model: model || null, effort: effort || null };
+    if (department) {
+      // Only what the boss changed: the manager may have edited other fields while this window was open.
+      const fields = (Object.keys(current) as (keyof typeof current)[]).filter((k) => current[k] !== opened.current[k]);
+      if (!fields.length) return openModal(null);
+      await api("PATCH", `/api/departments/${department.id}`, Object.fromEntries(fields.map((k) => [k, body[k]])));
+    } else await api("POST", "/api/departments", body);
     showToast(department ? `${name} updated.` : `${name} is open for business.`);
     openModal(null);
   };
@@ -1162,6 +1171,12 @@ function ScheduleRow({ schedule, staff }: { schedule: Schedule; staff: Employee[
     const names = rest.map(({ schedule: f }) => s.snapshot?.employees.find((e) => e.id === f.employeeId)?.name ?? f.title);
     return `Start it now, then ${names.join(", then ")}`;
   });
+  // Mirrors stillOpen() in server/schedules.ts:199-203: retries count too.
+  const running = useStore(
+    (s) => s.snapshot?.tasks.some((t) => t.scheduleId === schedule.id && (t.status === "queued" || t.status === "working")) ?? false,
+  );
+  // Covers the gap before the next snapshot shows the new task, so a double-click sends one request.
+  const [starting, setStarting] = useState(false);
   const [editing, setEditing] = useState(false);
   const employee = staff.find((e) => e.id === schedule.employeeId);
   const openLastTask = () => {
@@ -1171,8 +1186,14 @@ function ScheduleRow({ schedule, staff }: { schedule: Schedule; staff: Employee[
   };
   const toggle = () => api("PATCH", `/api/schedules/${schedule.id}`, { enabled: !schedule.enabled });
   const runNow = async () => {
-    await api("POST", `/api/schedules/${schedule.id}/run`);
-    showToast(`Started "${schedule.title}".`);
+    if (starting || running) return;
+    setStarting(true);
+    try {
+      await api("POST", `/api/schedules/${schedule.id}/run`);
+      showToast(`Started "${schedule.title}".`);
+    } finally {
+      setStarting(false);
+    }
   };
   const remove = async () => {
     if (!confirm(`Remove the recurring task "${schedule.title}"?`)) return;
@@ -1219,7 +1240,13 @@ function ScheduleRow({ schedule, staff }: { schedule: Schedule; staff: Employee[
         </small>
       </div>
       <div className="schedule__actions">
-        <button type="button" className="btn btn--ghost btn--sm" onClick={runNow} title={runTitle}>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={runNow}
+          disabled={running || starting}
+          title={running ? "Already running: open it with the status link" : runTitle}
+        >
           ▶
         </button>
         <button type="button" className="btn btn--ghost btn--sm" onClick={() => setEditing(true)}>
@@ -1236,7 +1263,7 @@ function ScheduleRow({ schedule, staff }: { schedule: Schedule; staff: Employee[
   );
 }
 
-function formatWhen(at: number) {
+export function formatWhen(at: number) {
   return new Date(at).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 

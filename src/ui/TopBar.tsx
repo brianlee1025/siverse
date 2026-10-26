@@ -14,7 +14,10 @@ export function TopBar({ snapshot }: { snapshot: Snapshot }) {
   const officeTasks = snapshot.tasks.filter((t) => !isClaudeCode(t));
   const working = officeTasks.filter((t) => t.status === "working").length;
   const queued = officeTasks.filter((t) => t.status === "queued").length;
-  const done = officeTasks.filter((t) => t.status === "done").length;
+  // Finished since local midnight. The server sends only the latest 60 finished tasks (server/store.ts:22),
+  // so a day with more than that undercounts.
+  const midnight = new Date().setHours(0, 0, 0, 0);
+  const done = officeTasks.filter((t) => t.status === "done" && (t.finishedAt ?? 0) >= midnight).length;
   const live = claudeCodeIsLive(snapshot);
   const { aiOffice } = snapshot.settings;
   const liveTasks = snapshot.tasks.filter((t) => isClaudeCode(t) && t.status === "working");
@@ -47,7 +50,7 @@ export function TopBar({ snapshot }: { snapshot: Snapshot }) {
             <Stat label="departments" value={snapshot.departments.filter((d) => !isClaudeCode(d)).length} />
             <Stat label="working" value={`${working}/${snapshot.maxConcurrentWorkers}`} />
             <Stat label="queued" value={queued} />
-            <Stat label="done" value={done} />
+            <Stat label="done today" value={done} title="Finished since midnight" />
           </>
         ) : (
           <>
@@ -161,9 +164,9 @@ function formatTime(at: number) {
     : `${date.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
 }
 
-function Stat({ label, value }: { label: string; value: number | string }) {
+function Stat({ label, value, title }: { label: string; value: number | string; title?: string }) {
   return (
-    <div className="stat">
+    <div className="stat" title={title}>
       <strong>{value}</strong>
       <span>{label}</span>
     </div>

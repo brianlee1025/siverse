@@ -16,6 +16,11 @@ const MAX_CHAIN = 5; // A after B after C…: longer chains are refused, and so 
 const HANDOVER_MAX_FILES = 20;
 const HANDOVER_FILES_CHARS = 500;
 const HANDOVER_SUMMARY_CHARS = 600;
+const LATE_MS = 10 * 60_000; // a run this late fell due while the office was closed
+
+/** "Mon 12 Oct, 08:00", for chat lines about when a run was due. */
+const dueText = (at: number) =>
+  new Date(at).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 export interface ScheduleInput {
   title: string;
@@ -161,6 +166,8 @@ export function findSchedule(id: string): Schedule | undefined {
 export function runScheduleNow(schedule: Schedule): Task {
   const department = state.departments.find((d) => d.id === schedule.departmentId);
   if (!department) throw new OfficeError("That schedule's department was closed.");
+  // The clock already skips a run while the last one is going (tickSchedules); ▶ and the manager must too.
+  if (stillOpen(schedule)) throw new OfficeError(`"${schedule.title}" is still running. Open its last run instead.`);
   return startRun(schedule, department);
 }
 
@@ -230,6 +237,7 @@ export function tickSchedules(now = Date.now()) {
   for (const schedule of [...state.schedules]) {
     if (!schedule.enabled || schedule.nextRunAt > now) continue;
     const department = state.departments.find((d) => d.id === schedule.departmentId);
+    const due = schedule.nextRunAt;
     schedule.nextRunAt = nextRun(schedule.cadence, now);
     changed();
     if (!department) continue;
@@ -238,7 +246,17 @@ export function tickSchedules(now = Date.now()) {
       continue;
     }
     startRun(schedule, department);
-    addChat("system", `⏰ ${department.name} started its recurring task "${schedule.title}".`, { tone: "info" });
+    if (now - due > LATE_MS) {
+      // Runs that fell due while the office was closed aren't made up. Say so, or a skipped week goes unnoticed.
+      const missed = nextRun(schedule.cadence, due) <= now;
+      addChat(
+        "system",
+        `⏰ ${department.name} started its recurring task "${schedule.title}" late: it was due ${dueText(due)}${missed ? ", and the runs due since then were skipped" : ""}.`,
+        { tone: "error" }, // kept in the chat's quiet mode, like a broken chain (startFollowers)
+      );
+    } else {
+      addChat("system", `⏰ ${department.name} started its recurring task "${schedule.title}".`, { tone: "info" });
+    }
   }
 }
 

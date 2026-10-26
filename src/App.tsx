@@ -167,11 +167,29 @@ function Toast({ toast }: { toast: ToastItem }) {
     timer.current = setTimeout(() => dismissToast(toast.id), Math.max(1000, left.current));
   };
   useEffect(() => {
-    resume();
+    if (!toast.sticky) resume();
     return pause;
   }, []);
   const hold = { onMouseEnter: pause, onMouseLeave: resume, onFocus: pause, onBlur: resume };
   const className = `toast toast--${toast.tone}`;
+  // An approval stays until it's answered (store.syncAsk) or dismissed here: two buttons side by side.
+  if (toast.sticky)
+    return (
+      <div className={className}>
+        <button
+          className="toast__open"
+          onClick={() => {
+            if (toast.taskId) selectTask(toast.taskId);
+            dismissToast(toast.id);
+          }}
+        >
+          {toast.text}
+        </button>
+        <button className="icon-btn toast__close" onClick={() => dismissToast(toast.id)} aria-label="Dismiss">
+          ✕
+        </button>
+      </div>
+    );
   // Plain toasts get hover only: making them focusable would add tab stops that do nothing.
   if (!toast.taskId)
     return (

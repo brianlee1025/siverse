@@ -33,11 +33,14 @@ interface WorkerProps {
   onSelect: (taskId: string) => void;
 }
 
+// Scratch vector for walk(), shared by every walker: walk() uses it synchronously, so no new object per frame.
+const toTarget = new Vector3();
+
 /** Moves a group one frame along its waypoints. Returns true while there is still somewhere to go. */
 function walk(g: Group, nav: { waypoints: Vector3[]; index: number }, delta: number): boolean {
   if (nav.index >= nav.waypoints.length) return false;
   const target = nav.waypoints[nav.index];
-  const toTarget = target.clone().sub(g.position);
+  toTarget.copy(target).sub(g.position);
   const distance = toTarget.length();
   const step = WALK_SPEED * Math.min(delta, 0.05);
   if (distance <= step) {
@@ -306,6 +309,8 @@ export const StaffMember = memo(function StaffMember({
           : lastTask
             ? `☕ last: ${shorten(lastTask.title)}`
             : undefined;
+  // Only "☕ last: …": the name shows, the text waits for hover. "📋 waiting for me" and ✅/⚠️ keep theirs.
+  const quiet = !task && !recent && waiting === 0 && Boolean(lastTask);
   return (
     <group
       ref={group}
@@ -325,7 +330,7 @@ export const StaffMember = memo(function StaffMember({
       )}
       <Html position={[0, bubbleHeight(employee.deskIndex), 0]} center distanceFactor={14} zIndexRange={BUBBLE_Z}>
         <div
-          className={`bubble${task || recent ? "" : " bubble--idle"}${asking ? " bubble--ask" : recentFailed ? " bubble--failed" : ""}${selected ? " bubble--selected" : ""}`}
+          className={`bubble${task || recent ? "" : " bubble--idle"}${quiet ? " bubble--quiet" : ""}${asking ? " bubble--ask" : recentFailed ? " bubble--failed" : ""}${selected ? " bubble--selected" : ""}`}
           onClick={click}
           title={`${employee.name} · ${employee.focus}`}
         >

@@ -143,7 +143,9 @@ export function strollSpots(layout: OfficeLayout): Vec2[] {
   const zones = [layout.boss, ...[...layout.departments.values()].map((d) => d.zone)];
   const spots: Vec2[] = [];
   for (const zone of zones) {
-    for (const dx of [-2.4, 0, 2.4]) spots.push([zone.center[0] + dx, zone.front + GAP / 2]);
+    // The boss row's far-left spot sits further in: at -2.4 its bubbles were clipped by the board.
+    const left = zone === layout.boss ? -1.6 : -2.4;
+    for (const dx of [left, 0, 2.4]) spots.push([zone.center[0] + dx, zone.front + GAP / 2]);
   }
   const cooler = coolerSpot(layout);
   if (cooler) spots.push(cooler);

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ServerMessage, Snapshot } from "../shared/types";
+import { isClaudeCode, type ServerMessage, type Snapshot } from "../shared/types";
 import { createTaskWatcher, share } from "./snapshot";
 
 export type Modal =
@@ -11,8 +11,28 @@ export type Modal =
 export interface Toast {
   id: number;
   text: string;
-  tone: "info" | "error";
+  tone: "info" | "error" | "ask";
   taskId?: string; // clicking the toast opens this task
+  sticky?: boolean; // stays until the approval is answered or the boss dismisses it
+}
+
+/** Office tasks waiting for the boss's OK, oldest first. */
+function asking(snapshot: Snapshot | null) {
+  return (snapshot?.tasks ?? []).filter((t) => t.approval && !isClaudeCode(t));
+}
+
+const askText = (n: number, text: string) => (n > 1 ? `✋ ${n} need your OK` : text);
+
+/** Same wording as the watcher's "ask" event (src/snapshot.ts). */
+function askLine(task: Snapshot["tasks"][number], snapshot: Snapshot) {
+  const department = snapshot.departments.find((d) => d.id === task.departmentId)?.name ?? "A department";
+  return `✋ ${task.workerName ?? department} needs your OK`;
+}
+
+/** At most MAX_TOASTS plain toasts; sticky ones never count, so quick "done" toasts can't push an approval out. */
+function capped(toasts: Toast[]) {
+  const plain = toasts.filter((t) => !t.sticky).slice(-MAX_TOASTS);
+  return toasts.filter((t) => t.sticky || plain.includes(t));
 }
 
 const MAX_TOASTS = 3;
@@ -53,6 +73,8 @@ interface UIState {
   markFailedSeen: (ids: string[]) => void;
   openModal: (modal: Modal | null) => void;
   showToast: (text: string, tone?: Toast["tone"], taskId?: string) => void;
+  showAsk: (text: string, taskId: string) => void;
+  syncAsk: (snapshot: Snapshot) => void;
   dismissToast: (id: number) => void;
   setChatOpen: (open: boolean) => void;
   setBoardOpen: (open: boolean) => void;
@@ -88,9 +110,33 @@ export const useStore = create<UIState>((set, get) => ({
   openModal: (modal) => set({ modal }),
   showToast: (text, tone = "info", taskId) =>
     set((s) => ({
-      toasts: [...s.toasts, { id: nextToastId++, text, tone, taskId }].slice(-MAX_TOASTS),
+      toasts: capped([...s.toasts, { id: nextToastId++, text, tone, taskId }]),
       announcement: text,
     })),
+  // One sticky toast for every approval: a second ask updates it to "✋ 2 need your OK".
+  showAsk: (text, taskId) =>
+    set((s) => {
+      const sticky = s.toasts.find((t) => t.sticky);
+      const n = asking(s.snapshot).length;
+      return {
+        toasts: sticky
+          ? s.toasts.map((t) => (t === sticky ? { ...t, text: askText(n, text), taskId } : t))
+          : capped([...s.toasts, { id: nextToastId++, text, tone: "ask", taskId, sticky: true }]),
+        announcement: text,
+      };
+    }),
+  // Runs on every snapshot. Only updates or removes the sticky toast: a dismissed one stays gone until the next ask.
+  syncAsk: (snapshot) =>
+    set((s) => {
+      const sticky = s.toasts.find((t) => t.sticky);
+      if (!sticky) return s;
+      const tasks = asking(snapshot);
+      if (!tasks.length) return { toasts: s.toasts.filter((t) => t !== sticky) };
+      const target = tasks.find((t) => t.id === sticky.taskId) ?? tasks[0];
+      const text = askText(tasks.length, askLine(target, snapshot));
+      if (text === sticky.text && target.id === sticky.taskId) return s;
+      return { toasts: s.toasts.map((t) => (t === sticky ? { ...t, text, taskId: target.id } : t)) };
+    }),
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
   setChatOpen: (chatOpen) => set({ chatOpen }),
   setBoardOpen: (boardOpen) => set({ boardOpen }),
@@ -122,7 +168,7 @@ export function connect() {
       const snapshot = share(previous, message.data);
       const events = watcher.update(snapshot);
       if (snapshot !== previous) useStore.setState({ snapshot });
-      const { showToast } = useStore.getState();
+      const { showToast, showAsk, syncAsk } = useStore.getState();
       const outage = droppedAt ? Date.now() - droppedAt : 0;
       droppedAt = 0;
       for (const e of events) {
@@ -135,9 +181,14 @@ export function connect() {
           if (document.hidden && count) useStore.setState((s) => ({ unseen: s.unseen + count }));
           continue;
         }
+        if (e.kind === "ask") {
+          showAsk(e.text, e.taskId);
+          continue;
+        }
         showToast(e.text, e.kind === "failed" ? "error" : "info", e.taskId);
-        if (document.hidden && e.kind !== "ask") useStore.setState((s) => ({ unseen: s.unseen + 1 }));
+        if (document.hidden) useStore.setState((s) => ({ unseen: s.unseen + 1 }));
       }
+      syncAsk(snapshot);
     };
     ws.onclose = () => {
       if (!droppedAt) droppedAt = Date.now();

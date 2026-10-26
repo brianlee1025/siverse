@@ -967,6 +967,13 @@ code {
 .bubble--idle {
   opacity: 0.8;
 }
+/* Idle staff show just their name; the last task shows on hover, so the bubbles that need the boss stand out. */
+.bubble--quiet .bubble__text {
+  display: none;
+}
+.bubble--quiet:hover .bubble__text {
+  display: -webkit-box;
+}
 /* Waiting for the boss's OK: a thick amber edge, gently pulsing unless motion is reduced. */
 .bubble--ask {
   border: 2px solid var(--warn);
@@ -1171,6 +1178,24 @@ code {
   font-size: 13px;
   line-height: 1.5;
 }
+/* The server's notes under a brief ("⏰ recurring", "⛓️ hand-over"), folded so the manager's ask stands out. */
+.brief-note {
+  margin: 4px 0 0;
+}
+.brief-note summary {
+  font-size: 12px;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.elapsed--long {
+  color: var(--warn);
+}
+.task-detail__confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
 .activity {
   margin: 0;
   padding-left: 18px;
@@ -1294,6 +1319,18 @@ code {
   background: var(--panel-2);
   overflow-wrap: anywhere;
   font-size: 12.5px;
+}
+.approval small code {
+  display: inline;
+  padding: 1px 4px;
+}
+/* "Just before: …" can be long; two lines are enough to see what led here. */
+.approval__before {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 .approval .form__actions {
   justify-content: flex-end;
@@ -1557,6 +1594,37 @@ code {
 }
 .toast--error {
   background: var(--danger);
+}
+/* Approvals: a light amber card with dark ink (white or dark ink on --warn itself is under 4.5:1). No pulse. */
+.toast--ask {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 16px;
+  background: color-mix(in srgb, var(--warn) 22%, white);
+  color: var(--ink);
+  border: 2px solid var(--warn);
+}
+.toast__open {
+  border: none;
+  background: none;
+  padding: 6px 0;
+  font: inherit;
+  font-weight: 650;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.toast__open:hover {
+  text-decoration: underline;
+}
+.toast__close {
+  width: 28px;
+  height: 28px;
+  color: var(--ink);
+}
+.toast__close:hover {
+  background: color-mix(in srgb, var(--warn) 30%, white);
 }
 .toast--link {
   cursor: pointer;

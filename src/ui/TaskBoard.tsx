@@ -12,7 +12,8 @@ import {
 } from "../failures";
 import { waitReasons } from "../queue";
 import { api, useStore } from "../store";
-import { Elapsed } from "./Elapsed";
+import { Elapsed, usualRun } from "./Elapsed";
+import { formatWhen } from "./Modals";
 
 const NEEDS_YOU_WINDOW_MS = 24 * 60 * 60 * 1000; // failed tasks older than this stay in "Recent"
 
@@ -54,6 +55,12 @@ export function TaskBoard({ snapshot }: { snapshot: Snapshot }) {
     .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
     .slice(0, 25);
   const claudeCodeLive = snapshot.tasks.filter((t) => isClaudeCode(t) && t.status === "working");
+  // The clock doesn't run while the AI office is off, so say which recurring tasks fell due meanwhile.
+  const overdue = aiOffice
+    ? []
+    : snapshot.schedules
+        .filter((s) => s.enabled && s.cadence.kind !== "after" && s.nextRunAt < now - 2 * 60_000)
+        .sort((a, b) => a.nextRunAt - b.nextRunAt);
 
   // Repeated failures of the same task fold into the newest card ("failed 3×"). Approvals never fold.
   const newestFail = new Map<string, Task>();
@@ -103,12 +110,26 @@ export function TaskBoard({ snapshot }: { snapshot: Snapshot }) {
       </header>
       <div className="board__scroll">
         {!aiOffice ? (
-          claudeCodeLive.length === 0 && (
-            <p className="muted board__empty">
-              Nothing running right now. Your Claude Code sessions and their subagents show up here while they work.
-            </p>
-          )
-        ) : officeDepartments.length === 0 ? (
+          <>
+            {overdue.length > 0 && (
+              <p className="hint board__empty">
+                ⏰ {overdue.length} recurring task{overdue.length === 1 ? "" : "s"} came due while the AI office was off: “
+                {overdue[0].title}” (due {formatWhen(overdue[0].nextRunAt)})
+                {overdue.length > 1 ? ` and ${overdue.length - 1} more` : ""}. Each runs once when you turn the AI office
+                back on in{" "}
+                <button type="button" className="link" onClick={() => openModal({ type: "settings" })}>
+                  Settings
+                </button>
+                ; missed runs aren't made up.
+              </p>
+            )}
+            {claudeCodeLive.length === 0 && (
+              <p className="muted board__empty">
+                Nothing running right now. Your Claude Code sessions and their subagents show up here while they work.
+              </p>
+            )}
+          </>
+        ) :officeDepartments.length === 0 ? (
           <p className="muted board__empty">No departments yet. Ask the manager to open one, or add it yourself.</p>
         ) : (
           <ul className="dept-list">
@@ -159,7 +180,7 @@ export function TaskBoard({ snapshot }: { snapshot: Snapshot }) {
           }
         />
         <TaskSection title="⚡ Claude Code, live" tasks={claudeCodeLive} departments={departments} />
-        <TaskSection title="Working" tasks={working} departments={departments} />
+        <TaskSection title="Working" tasks={working} departments={departments} allTasks={snapshot.tasks} />
         <TaskSection title="Waiting for a desk" tasks={queued} departments={departments} notes={waitReasons(snapshot)} />
         <TaskSection title="Recent" tasks={finished} departments={departments} skipped={skipped} />
       </div>
@@ -218,6 +239,7 @@ function TaskSection({
   chipFrom,
   skipped,
   notes,
+  allTasks,
 }: {
   title: string;
   tasks: Task[];
@@ -228,6 +250,7 @@ function TaskSection({
   chipFrom?: Map<string, Task>; // the folded member whose chip the card shows
   skipped?: Map<string, string>; // "Draft report → Review", for failed tasks that broke a chain
   notes?: Map<string, string>; // why a queued task waits
+  allTasks?: Task[]; // for "usually ~25 min" on running recurring tasks
 }) {
   const selectTask = useStore((s) => s.selectTask);
   const selectedTaskId = useStore((s) => s.selectedTaskId);
@@ -273,7 +296,11 @@ function TaskSection({
             <span className="task-card__meta">
               {department?.name ?? "Closed department"}
               {task.workerName ? ` · ${task.workerName}` : ""}
-              <Elapsed task={task} before=" · " />
+              <Elapsed
+                task={task}
+                before=" · "
+                usual={allTasks && task.scheduleId && task.status === "working" ? usualRun(allTasks, task.scheduleId) : undefined}
+              />
               {repeats ? ` · failed ${repeats.length + 1}×` : ""}
               {chipTask !== task && latest !== "other" ? ` · latest: ${FAILURE_CHIP[latest]}` : ""}
             </span>

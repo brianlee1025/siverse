@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import Markdown from "react-markdown";
-import type { Snapshot, Task } from "../../shared/types";
+import type { CommandView, Snapshot, Task } from "../../shared/types";
 import { describeCadence, isClaudeCode } from "../../shared/types";
 import { inkFor } from "../colors";
 import { useDraft } from "../drafts";
-import { failureKind, resetHint, scheduleLabel, skippedFollowers } from "../failures";
+import { failureKind, resetHint, scheduleLabel, skippedFollowers, splitBrief } from "../failures";
 import { api, useStore } from "../store";
 import { DriveMarkdown } from "./DriveMarkdown";
 import { Elapsed } from "./Elapsed";
 import { STATUS_LABEL } from "./TaskBoard";
+
+const ASK_AFTER_MS = 60_000; // "Send worker home" asks first once a run has gone on this long
+const CONFIRM_MS = 4000;
 
 export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
   const selectedTaskId = useStore((s) => s.selectedTaskId);
@@ -51,6 +54,17 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
     if (lost && target?.isConnected) target.focus({ preventScroll: true });
   }, [selectedTaskId]);
 
+  // "Send worker home" on a long run asks once more; the question goes away by itself after a few seconds.
+  const [confirming, setConfirming] = useState(false);
+  const keepWorking = useRef<HTMLButtonElement>(null);
+  useEffect(() => setConfirming(false), [selectedTaskId]);
+  useEffect(() => {
+    if (!confirming) return;
+    keepWorking.current?.focus(); // so a double-click or Enter doesn't confirm
+    const timer = setTimeout(() => setConfirming(false), CONFIRM_MS);
+    return () => clearTimeout(timer);
+  }, [confirming]);
+
   if (!task) return null;
   const department = snapshot.departments.find((d) => d.id === task.departmentId);
   const fromClaudeCode = isClaudeCode(task);
@@ -59,6 +73,9 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
   const canFollowUp = !fromClaudeCode && !active && Boolean(department) && snapshot.settings.aiOffice;
 
   const cancel = () => api("POST", `/api/tasks/${task.id}/cancel`);
+  // A queued task, or one that only just started, has little to lose: it goes at once.
+  const askFirst = task.status === "working" && Boolean(task.startedAt) && Date.now() - (task.startedAt ?? 0) > ASK_AFTER_MS;
+  const brief = task.brief ? splitBrief(task.brief) : undefined;
   const retry = async () => {
     const next = await api<{ id: string }>("POST", `/api/tasks/${task.id}/retry`);
     selectTask(next.id);
@@ -161,10 +178,17 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
             </ol>
           </section>
         )}
-        {task.brief && (
+        {brief && (
           <details>
             <summary>{fromClaudeCode ? (task.kind === "subagent" ? "Its brief" : "Your latest request") : "Brief from the manager"}</summary>
-            <p className="brief">{task.brief}</p>
+            <p className="brief">{brief.ask}</p>
+            {/* The server's own notes, folded: plain text like the brief, no Markdown (it would merge line breaks). */}
+            {brief.notes.map((note) => (
+              <details key={note.label} className="brief-note">
+                <summary>{note.label}</summary>
+                <p className="brief">{note.text}</p>
+              </details>
+            ))}
           </details>
         )}
         {!fromClaudeCode && (
@@ -192,11 +216,22 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
       {canFollowUp && <FollowUp key={task.id} task={task} />}
 
       <footer className="task-detail__footer">
-        {active && (
-          <button className="btn btn--danger btn--sm" onClick={cancel}>
-            {task.status === "working" ? "Send worker home" : "Cancel task"}
-          </button>
-        )}
+        {active &&
+          (confirming ? (
+            <span className="task-detail__confirm">
+              Send {task.workerName ?? "them"} home?
+              <button className="btn btn--danger btn--sm" onClick={cancel}>
+                Yes
+              </button>
+              <button ref={keepWorking} className="btn btn--ghost btn--sm" onClick={() => setConfirming(false)}>
+                No
+              </button>
+            </span>
+          ) : (
+            <button className="btn btn--danger btn--sm" onClick={askFirst ? () => setConfirming(true) : cancel}>
+              {task.status === "working" ? "Send worker home" : "Cancel task"}
+            </button>
+          ))}
         {kind === "setup" && (
           <button className="btn btn--primary btn--sm" onClick={() => openModal({ type: "settings" })}>
             Open Settings
@@ -235,6 +270,46 @@ function AnswerBy({ requestedAt }: { requestedAt: number }) {
 
 const time = (at: number) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+/** "14:05" today, else "Mon 19 Oct, 14:05". */
+const when = (at: number) =>
+  new Date(at).toDateString() === new Date().toDateString()
+    ? time(at)
+    : new Date(at).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+// Mirrors commandLine() in server/commands.ts:230-233, so an earlier run reads exactly like this request.
+function lineOf(command: CommandView, args: string[]) {
+  const quote = (a: string) => (/[\s"']/.test(a) || a === "" ? JSON.stringify(a) : a);
+  return [command.program, command.script.split(/[\\/]/).at(-1) ?? command.script, ...args].map(quote).join(" ");
+}
+
+const MAX_NEW_WORDS = 5;
+
+/** How this request compares with the last run of the same command that went through. */
+function LastRun({ task, command, line, snapshot }: { task: Task; command: CommandView; line: string; snapshot: Snapshot }) {
+  const last = snapshot.tasks
+    .filter((t) => t.departmentId === task.departmentId)
+    .flatMap((t) => t.commandRuns ?? [])
+    .filter((run) => run.name === command.name && run.outcome === "ok")
+    .sort((a, b) => b.at - a.at)[0];
+  if (!last) return <small className="muted">First time this command runs (among the tasks the office still shows)</small>;
+  const before = lineOf(command, last.args);
+  if (before === line) return <small className="muted">Same as the last run, {when(last.at)}</small>;
+  // Split on spaces for display only: a quoted argument with spaces may show as two words.
+  const old = new Set(before.split(" "));
+  const added = line.split(" ").filter((word) => !old.has(word)).slice(0, MAX_NEW_WORDS);
+  return (
+    <small className="muted">
+      Last ran as <code>{before}</code>, {when(last.at)}
+      {added.length > 0 && (
+        <>
+          {" · new: "}
+          <span className="approval__urgent">{added.join(", ")}</span>
+        </>
+      )}
+    </small>
+  );
+}
+
 const RUN_OUTCOME = {
   ok: "✅ ran",
   failed: "⚠️ failed",
@@ -265,7 +340,11 @@ function Approval({ task, snapshot }: { task: Task; snapshot: Snapshot }) {
     <div className="approval" role="alert">
       <strong>✋ {task.workerName ?? "A worker"} wants to run</strong>
       <code>{approval.commandLine}</code>
+      {command && <LastRun task={task} command={command} line={approval.commandLine} snapshot={snapshot} />}
       <span>“{approval.reason}”</span>
+      {task.activity.length > 0 && (
+        <small className="muted approval__before">Just before: {task.activity.slice(-3).join(" · ")}</small>
+      )}
       {command && (
         <small className="muted">
           In {command.script.split("/").slice(0, -1).join("/")}/

@@ -5,6 +5,27 @@ import type { Employee, Schedule, Task } from "../shared/types";
 
 // Must match the error the server gives tasks cut off by a restart (server/store.ts:57).
 export const INTERRUPTED_PREFIX = "Interrupted because the server restarted";
+// Notes the server appends to briefs. Must match server/schedules.ts:190, :182 and server/office.ts:172.
+export const BRIEF_NOTES = [
+  { start: "\n\n(This is a recurring task:", label: "⏰ recurring" },
+  { start: "\n\n(This run follows ", label: "⛓️ hand-over" },
+  { start: "\n\n(An earlier attempt at this task", label: "🔁 earlier attempt" },
+] as const;
+
+/** The manager's ask, then the server's notes in the order they appear, so the card can fold the notes. */
+export function splitBrief(brief: string): { ask: string; notes: { label: string; text: string }[] } {
+  const found = BRIEF_NOTES.map((note) => ({ ...note, at: brief.indexOf(note.start) }))
+    .filter((note) => note.at >= 0)
+    .sort((a, b) => a.at - b.at);
+  if (!found.length) return { ask: brief, notes: [] };
+  const notes = found.map((note, i) => {
+    const text = brief.slice(note.at, found[i + 1]?.at ?? brief.length).trim();
+    const leader = note.label === "⛓️ hand-over" ? /^\(This run follows "([^"]*)"/.exec(text)?.[1] : undefined;
+    return { label: leader ? `${note.label} (${leader})` : note.label, text };
+  });
+  return { ask: brief.slice(0, found[0].at), notes };
+}
+
 // The chain limit in server/schedules.ts:15 (MAX_CHAIN). The only copy in src/.
 const MAX_CHAIN = 5;
 
