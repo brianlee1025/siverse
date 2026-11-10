@@ -5,6 +5,7 @@ import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { Department, Snapshot, Task } from "../../shared/types";
 import { BUBBLE_Z, buildLayout, SIGN_Z, ZONE_D, ZONE_W, type OfficeLayout, type Zone } from "../layout";
 import { inkFor } from "../colors";
+import { NEEDS_YOU_WINDOW_MS } from "../failures";
 import { useStore } from "../store";
 import { Bookshelf, Chair, Desk, DoorFrame, InTray, Plant, WaterCooler } from "./Furniture";
 import { Person, type Motion } from "./Person";
@@ -322,14 +323,19 @@ const DepartmentZone = memo(function DepartmentZone({
     <group>
       <Rug zone={zone} color={department.color} opacity={0.28} onClick={open} />
       <Html position={[zone.center[0], 2.3, zone.center[1] - ZONE_D / 2 + 0.3]} center distanceFactor={16} zIndexRange={SIGN_Z}>
-        <button className="zone-sign" style={{ borderColor: department.color }} onClick={open}>
+        <button
+          className="zone-sign"
+          style={{ borderColor: department.color }}
+          onClick={open}
+          title={department.codeAccess ? "Workers may change Siverse's own code" : undefined}
+        >
           <strong style={{ color: inkFor(department.color) }}>
             {department.source === "claude-code" ? `⚡ ${department.name}` : department.name}
           </strong>
           <span>
             {department.source === "claude-code"
               ? `Claude Code · ${working.length} at work`
-              : `${working.length}/${department.headcount} working${queued ? ` · ${queued} waiting` : ""}${department.webAccess ? " · 🌐" : ""}`}
+              : `${working.length}/${department.headcount} working${queued ? ` · ${queued} waiting` : ""}${department.webAccess ? " · 🌐" : ""}${department.codeAccess ? " · 🔧" : ""}`}
           </span>
         </button>
       </Html>
@@ -388,13 +394,14 @@ function ClaudeCodePlaceholder({ zone, connected }: { zone: Zone; connected: boo
 function Workers({ snapshot, layout }: { snapshot: Snapshot; layout: OfficeLayout }) {
   const selectedTaskId = useStore((s) => s.selectedTaskId);
   const selectTask = useStore((s) => s.selectTask);
+  const seenFailed = useStore((s) => s.seenFailed);
 
   // Permanent employees are always in the office (StaffMember); temps come and go with their task.
   // No clock tick needed: a leaving temp hides itself once it's out the door.
   const now = Date.now();
   // The ring follows the selected task's owner, even once it's finished and they're idle.
   const selectedOwner = snapshot.tasks.find((t) => t.id === selectedTaskId)?.employeeId;
-  const staff =new Set(snapshot.employees.map((e) => e.id));
+  const staff = new Set(snapshot.employees.map((e) => e.id));
   const temps = snapshot.tasks.filter(
     (t) =>
       t.startedAt &&
@@ -416,6 +423,11 @@ function Workers({ snapshot, layout }: { snapshot: Snapshot; layout: OfficeLayou
             if (!lastTask || t.finishedAt > (lastTask.finishedAt ?? 0)) lastTask = t;
           }
         }
+        // Same rule as the board's "Needs you" (TaskBoard.tsx), so the two never disagree. A boolean, for memo.
+        const unseenFailure =
+          lastTask?.status === "failed" &&
+          now - (lastTask.finishedAt ?? 0) < NEEDS_YOU_WINDOW_MS &&
+          !seenFailed.includes(lastTask.id);
         return (
           <StaffMember
             key={employee.id}
@@ -425,6 +437,7 @@ function Workers({ snapshot, layout }: { snapshot: Snapshot; layout: OfficeLayou
             task={task}
             lastTask={lastTask}
             waiting={waiting}
+            unseenFailure={unseenFailure}
             selected={employee.id === selectedOwner}
             onSelect={selectTask}
           />

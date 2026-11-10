@@ -186,6 +186,16 @@ export function retryTask(task: Task): Task {
   if (task.thread?.at(-1)?.role === "boss") return followUpTask(task);
   const department = state.departments.find((d) => d.id === task.departmentId);
   if (!department) throw new OfficeError("That department no longer exists.");
+  // A double-click, a second tab or the manager mustn't start the same work twice. Same test as the
+  // board's "interrupted" row (src/ui/TaskBoard.tsx:42-50): a newer open task with this title.
+  const again = state.tasks.find(
+    (t) =>
+      t.departmentId === task.departmentId &&
+      t.title === task.title &&
+      (t.status === "queued" || t.status === "working") &&
+      t.createdAt > (task.finishedAt ?? 0),
+  );
+  if (again) throw new OfficeError(`"${task.title}" is already running again (${again.id}). Open the newer run.`);
   // The same employee takes it again if they still work there.
   const employeeId = departmentStaff(department.id).some((e) => e.id === task.employeeId) ? task.employeeId : undefined;
   return assignTask(department, task.title, briefForRetry(task), { scheduleId: task.scheduleId, employeeId });

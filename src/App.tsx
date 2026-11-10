@@ -59,7 +59,8 @@ export function App() {
     history.replaceState(null, "", location.pathname);
   }, [snapshot, openModal, selectTask]);
 
-  useTabTitle(snapshot);
+  // The raw snapshot: an approval from a hidden office task still counts while the AI office is off.
+  useTabTitle(raw);
 
   if (!snapshot) {
     return (
@@ -81,7 +82,9 @@ export function App() {
             <OfficeScene key={sceneKey} snapshot={snapshot} />
           </ErrorBoundary>
           <ErrorBoundary name="task card" resetKey={selectedTaskId} onClose={() => selectTask(null)}>
-            <TaskDetail snapshot={snapshot} />
+            {/* Off: the board hides office tasks, but a running worker can still ask for an OK, and the
+                approval route doesn't need the office on. */}
+            <TaskDetail snapshot={raw && !raw.settings.aiOffice ? raw : snapshot} />
           </ErrorBoundary>
         </section>
         <ChatPanel snapshot={snapshot} />

@@ -26,6 +26,13 @@ export function splitBrief(brief: string): { ask: string; notes: { label: string
   return { ask: brief.slice(0, found[0].at), notes };
 }
 
+// Must match APPROVAL_TIMEOUT_MS in server/commands.ts:26 (off-limits to the office's workers). Kept in src/,
+// not in shared/types.ts, because the server's tsx watch restarts on any change to a file it imports.
+export const APPROVAL_TIMEOUT_MINUTES = 30;
+
+// Failed tasks older than this leave the board's "Needs you" for "Recent", and stop being flagged in the 3D office.
+export const NEEDS_YOU_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 // The chain limit in server/schedules.ts:15 (MAX_CHAIN). The only copy in src/.
 const MAX_CHAIN = 5;
 

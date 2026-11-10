@@ -1,6 +1,6 @@
 import type { Snapshot, Task, TaskStatus } from "../shared/types";
 import { isClaudeCode } from "../shared/types";
-import { chainFrom, chainRoot, failureKind } from "./failures";
+import { APPROVAL_TIMEOUT_MINUTES, chainFrom, chainRoot, failureKind } from "./failures";
 import { duration } from "./ui/Elapsed";
 
 // Every snapshot is a fresh JSON.parse, so nothing is ever `===` the last one and React.memo can't
@@ -45,7 +45,8 @@ export function share(prev: Snapshot | null, next: Snapshot): Snapshot {
 }
 
 export interface TaskEvent {
-  kind: "done" | "failed" | "ask" | "back" | "pipeline"; // "pipeline": the last step of a chain finished its round
+  // "pipeline": the last step of a chain finished its round. "timeout": an approval went unanswered.
+  kind: "done" | "failed" | "ask" | "back" | "pipeline" | "timeout";
   taskId: string; // "" = a plain toast that opens nothing
   text: string;
   // "back" only: what happened while the line was down.
@@ -59,7 +60,7 @@ export interface TaskEvent {
  * Claude Code tasks are skipped: their subagents finish all the time.
  */
 export function createTaskWatcher() {
-  let seen: Map<string, { status: TaskStatus; asking: boolean }> | null = null;
+  let seen: Map<string, Seen> | null = null;
   let summarise = false;
   return {
     reconnected() {
@@ -67,16 +68,26 @@ export function createTaskWatcher() {
     },
     update(snapshot: Snapshot): TaskEvent[] {
       const events: TaskEvent[] = [];
-      const next = new Map<string, { status: TaskStatus; asking: boolean }>();
+      const next = new Map<string, Seen>();
       for (const task of snapshot.tasks) {
         if (isClaudeCode(task)) continue;
-        const now = { status: task.status, asking: Boolean(task.approval) };
+        const missed = task.commandRuns?.filter((r) => r.outcome === "no-answer") ?? [];
+        const now = { status: task.status, asking: Boolean(task.approval), noAnswer: missed.length };
         next.set(task.id, now);
         if (!seen) continue;
         const before = seen.get(task.id);
         const department = snapshot.departments.find((d) => d.id === task.departmentId)?.name ?? "A department";
         if (now.asking && !before?.asking) {
           events.push({ kind: "ask", taskId: task.id, text: `✋ ${task.workerName ?? department} needs your OK` });
+        }
+        // Counted, not "stopped asking and the newest run is no-answer": the server clears `approval`
+        // (commands.ts:296-297) before it records the run (:362-363), so the two can land in different snapshots.
+        if (before && now.noAnswer > before.noAnswer) {
+          events.push({
+            kind: "timeout",
+            taskId: task.id,
+            text: `⌛ ${task.workerName ?? department} asked to run ${missed.at(-1)!.name}, but nobody answered in ${APPROVAL_TIMEOUT_MINUTES} min`,
+          });
         }
         if (!before || before.status === now.status) continue;
         // Across a gap a task can go from waiting straight to done.
@@ -95,10 +106,14 @@ export function createTaskWatcher() {
         return events;
       }
       summarise = false;
-      return [backEvent(events, snapshot)];
+      // A missed approval keeps its own red toast: folded into "Office is back" nobody would notice it.
+      const timeouts = events.filter((e) => e.kind === "timeout");
+      return [backEvent(events.filter((e) => e.kind !== "timeout"), snapshot), ...timeouts];
     },
   };
 }
+
+type Seen = { status: TaskStatus; asking: boolean; noAnswer: number };
 
 // A follower is started the moment its leader's task finishes (server/schedules.ts startFollowers).
 const FOLLOW_SLACK_MS = 2 * 60_000;
@@ -144,7 +159,8 @@ function backEvent(events: TaskEvent[], snapshot: Snapshot): TaskEvent {
     finished && `${finished} finished`,
     interrupted && `${interrupted} interrupted`,
     failed && `${failed} failed`,
-    asking && `${asking} need${asking === 1 ? "s" : ""} your OK`,
+    // Asks aren't listed: the sticky "needs your OK" toast says it (store.ts connect). `summary.asking` stays,
+    // so a short blip with an ask still gets this toast.
   ].filter(Boolean);
   const taskId =
     failedIds[0] ?? events.find((e) => e.kind === "done" || e.kind === "pipeline")?.taskId ?? events[0]?.taskId ?? "";

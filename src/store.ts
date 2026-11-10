@@ -147,6 +147,7 @@ export const useStore = create<UIState>((set, get) => ({
 export function connect() {
   let retry = 0;
   let droppedAt = 0; // when the line went down, until the first snapshot after it comes back
+  let firstSnapshot = true; // since the page loaded
   const watcher = createTaskWatcher();
   const open = () => {
     const protocol = location.protocol === "https:" ? "wss" : "ws";
@@ -185,9 +186,16 @@ export function connect() {
           showAsk(e.text, e.taskId);
           continue;
         }
-        showToast(e.text, e.kind === "failed" ? "error" : "info", e.taskId);
+        showToast(e.text, e.kind === "failed" || e.kind === "timeout" ? "error" : "info", e.taskId);
         if (document.hidden) useStore.setState((s) => ({ unseen: s.unseen + 1 }));
       }
+      // A page load only seeds the watcher, and a reconnect folds asks into the "back" toast: neither calls
+      // showAsk. So an approval already waiting gets its sticky toast here. (A dismissed one comes back after a blip.)
+      if (firstSnapshot || events.some((e) => e.summary)) {
+        const waiting = asking(snapshot);
+        if (waiting.length && !useStore.getState().toasts.some((t) => t.sticky)) showAsk(askLine(waiting[0], snapshot), waiting[0].id);
+      }
+      firstSnapshot = false;
       syncAsk(snapshot);
     };
     ws.onclose = () => {

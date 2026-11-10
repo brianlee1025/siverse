@@ -5,6 +5,7 @@ import {
   MODEL_OPTIONS,
   WEEKDAYS,
   describeCadence,
+  isClaudeCode,
   type AskFirst,
   type CommandView,
   type Department,
@@ -47,19 +48,38 @@ export function Modals({ snapshot }: { snapshot: Snapshot }) {
   }
 }
 
+// Forms anywhere in an open window report unsaved edits here, so the window's own close buttons can ask first.
+const unsaved = new Set<symbol>();
+function useUnsaved(dirty: boolean) {
+  const key = useRef(Symbol()).current;
+  useEffect(() => {
+    if (dirty) unsaved.add(key);
+    else unsaved.delete(key);
+    return () => void unsaved.delete(key);
+  }, [dirty, key]);
+}
+
 function Modal({ title, children, wide }: { title: string; children: ReactNode; wide?: boolean }) {
   const openModal = useStore((s) => s.openModal);
+  // Esc and ✕ ask before throwing away edits; a successful save calls openModal(null) itself and never asks.
+  const close = () => {
+    if (unsaved.size && !confirm("Discard your changes?")) return;
+    openModal(null);
+  };
+  const closeRef = useRef(close);
+  closeRef.current = close;
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && openModal(null);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeRef.current();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [openModal]);
+  }, []);
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && openModal(null)}>
+    // The backdrop never discards edits (a drag-select that ends outside the window lands here).
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && !unsaved.size && openModal(null)}>
       <div className={`modal${wide ? " modal--wide" : ""}`} role="dialog" aria-modal aria-label={title}>
         <header className="modal__header">
           <h2>{title}</h2>
-          <button className="icon-btn" onClick={() => openModal(null)} aria-label="Close">
+          <button className="icon-btn" onClick={close} aria-label="Close">
             ✕
           </button>
         </header>
@@ -103,6 +123,10 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
   const [managerModel, setManagerModel] = useState(settings.managerModel);
   const [workerModel, setWorkerModel] = useState(settings.workerModel);
   const [engine, setEngine] = useState(settings.engine);
+  // For the warning when the boss unticks "AI office" (the office is still on until Save, so this snapshot is unfiltered).
+  const office = snapshot.tasks.filter((t) => !isClaudeCode(t));
+  const stillRunning = office.filter((t) => t.status === "working" || t.status === "queued").length;
+  const stillAsking = office.filter((t) => t.approval).length;
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -141,6 +165,13 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
             </small>
           </span>
         </label>
+        {settings.aiOffice && !aiOffice && (stillRunning > 0 || stillAsking > 0) && (
+          <p className="hint tiny command__warn">
+            {stillRunning} task{stillRunning === 1 ? " is" : "s are"} still running
+            {stillAsking ? ` and ${stillAsking} wait${stillAsking === 1 ? "s" : ""} for your OK` : ""}. They carry on, but the
+            office hides them, and chained steps after them won't start.
+          </p>
+        )}
 
         {aiOffice && (
           <fieldset>
@@ -283,18 +314,29 @@ function DepartmentModal({
     opened.current.headcount = desks; // a hire isn't the boss's change
   }, [desks]);
 
+  // One flag per form, set in the submit handler, so a double-click or Enter-Enter sends once.
+  const [saving, setSaving] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const current = { name, genre, description, headcount, webAccess, codeAccess, model, effort };
+  const changedFields = (Object.keys(current) as (keyof typeof current)[]).filter((k) => current[k] !== opened.current[k]);
+  useUnsaved(changedFields.length > 0);
+
   const save = async (e: FormEvent) => {
     e.preventDefault();
-    const current = { name, genre, description, headcount, webAccess, codeAccess, model, effort };
-    const body = { ...current, model: model || null, effort: effort || null };
-    if (department) {
-      // Only what the boss changed: the manager may have edited other fields while this window was open.
-      const fields = (Object.keys(current) as (keyof typeof current)[]).filter((k) => current[k] !== opened.current[k]);
-      if (!fields.length) return openModal(null);
-      await api("PATCH", `/api/departments/${department.id}`, Object.fromEntries(fields.map((k) => [k, body[k]])));
-    } else await api("POST", "/api/departments", body);
-    showToast(department ? `${name} updated.` : `${name} is open for business.`);
-    openModal(null);
+    if (saving) return;
+    setSaving(true);
+    try {
+      const body = { ...current, model: model || null, effort: effort || null };
+      if (department) {
+        // Only what the boss changed: the manager may have edited other fields while this window was open.
+        if (!changedFields.length) return openModal(null);
+        await api("PATCH", `/api/departments/${department.id}`, Object.fromEntries(changedFields.map((k) => [k, body[k]])));
+      } else await api("POST", "/api/departments", body);
+      showToast(department ? `${name} updated.` : `${name} is open for business.`);
+      openModal(null);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const close = async () => {
@@ -306,12 +348,17 @@ function DepartmentModal({
 
   const assign = async (e: FormEvent) => {
     e.preventDefault();
-    if (!department) return;
-    await api("POST", `/api/departments/${department.id}/tasks`, { title: taskTitle, brief: taskBrief, employee: taskEmployee });
-    const who = staff.find((e) => e.id === taskEmployee)?.name ?? department.name;
-    showToast(`Task handed to ${who}.`);
-    clearTaskTitle();
-    clearTaskBrief();
+    if (!department || assigning) return;
+    setAssigning(true);
+    try {
+      await api("POST", `/api/departments/${department.id}/tasks`, { title: taskTitle, brief: taskBrief, employee: taskEmployee });
+      const who = staff.find((e) => e.id === taskEmployee)?.name ?? department.name;
+      showToast(`Task handed to ${who}.`);
+      clearTaskTitle();
+      clearTaskBrief();
+    } finally {
+      setAssigning(false);
+    }
   };
 
   return (
@@ -404,7 +451,7 @@ function DepartmentModal({
             </button>
           )}
           <span className="spacer" />
-          <button className="btn btn--primary" type="submit">
+          <button className="btn btn--primary" type="submit" disabled={saving}>
             {department ? "Save" : "Open department"}
           </button>
         </div>
@@ -425,7 +472,7 @@ function DepartmentModal({
             required
           />
           <div className="form__actions">
-            <button className="btn btn--primary" type="submit">
+            <button className="btn btn--primary" type="submit" disabled={assigning}>
               Assign task
             </button>
           </div>
@@ -449,7 +496,9 @@ const ASK_FIRST_WARNING: Partial<Record<AskFirst, string>> = {
     "⚠️ Only safe if running the script with no arguments is a real dry run that changes nothing. Workers run it bare without asking.",
   never: "⚠️ Workers run this command unattended, with any arguments, and you won't be asked.",
 };
-const SCRIPT_EXTENSIONS = /\.(py|js|mjs|cjs|sh|ps1|rb|php|pl)$/i;
+// Higher = asks the boss less often.
+const ASK_RISK: Record<AskFirst, number> = { always: 0, "with-args": 1, never: 2 };
+const SCRIPT_EXTENSIONS =/\.(py|js|mjs|cjs|sh|ps1|rb|php|pl)$/i;
 
 /** A sensible program for a script, which the boss can change. */
 function programFor(script: string) {
@@ -487,22 +536,29 @@ function CommandsSection({ department, commands }: { department: Department; com
     if (!name) setName(file.split("/").pop()?.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_-]/g, "_") ?? "");
   };
 
+  const [saving, setSaving] = useState(false);
   const add = async (e: FormEvent) => {
     e.preventDefault();
-    await api("POST", `/api/departments/${department.id}/commands`, {
-      name,
-      script,
-      program,
-      description,
-      askFirst,
-      secrets: secrets.split(/[\s,]+/).filter(Boolean),
-    });
-    showToast(`${department.name} can now run ${name}.`);
-    setAdding(false);
-    setName("");
-    setScript("");
-    setDescription("");
-    setSecrets("");
+    if (saving) return;
+    setSaving(true);
+    try {
+      await api("POST", `/api/departments/${department.id}/commands`, {
+        name,
+        script,
+        program,
+        description,
+        askFirst,
+        secrets: secrets.split(/[\s,]+/).filter(Boolean),
+      });
+      showToast(`${department.name} can now run ${name}.`);
+      setAdding(false);
+      setName("");
+      setScript("");
+      setDescription("");
+      setSecrets("");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -586,7 +642,7 @@ function CommandsSection({ department, commands }: { department: Department; com
             <button type="button" className="btn btn--ghost" onClick={() => setAdding(false)}>
               Cancel
             </button>
-            <button className="btn btn--primary" type="submit" disabled={!script}>
+            <button className="btn btn--primary" type="submit" disabled={!script || saving}>
               Approve this script
             </button>
           </div>
@@ -606,7 +662,15 @@ function CommandsSection({ department, commands }: { department: Department; com
 function CommandRow({ command }: { command: CommandView }) {
   const showToast = useStore((s) => s.showToast);
   const openModal = useStore((s) => s.openModal);
-  const setAsk = (askFirst: AskFirst) => api("PATCH", `/api/commands/${command.id}`, { askFirst });
+  // Asking less often is the risky way: confirm it. Asking more often needs no confirm. On "No" the
+  // controlled select snaps back to command.askFirst on the next render.
+  const setAsk = (askFirst: AskFirst) => {
+    if (ASK_RISK[askFirst] > ASK_RISK[command.askFirst]) {
+      const gets = command.secrets.length ? ` It gets ${command.secrets.join(", ")}.` : "";
+      if (!confirm(`${ASK_FIRST_WARNING[askFirst] ?? ""}${gets}\n\nChange "Ask me first" for ${command.name} to "${ASK_FIRST[askFirst]}"?`)) return;
+    }
+    return api("PATCH", `/api/commands/${command.id}`, { askFirst });
+  };
   const reapprove = async () => {
     if (!confirm(`Approve the current version of ${command.script}? Read it first: workers may have changed it.`)) return;
     await api("POST", `/api/commands/${command.id}/reapprove`);
@@ -705,13 +769,20 @@ function TeamSection({ department, staff, tasks }: { department: Department; sta
   const [focus, setFocus] = useState("");
   const full = staff.length >= MAX_HEADCOUNT;
 
+  const [saving, setSaving] = useState(false);
   const hire = async (e: FormEvent) => {
     e.preventDefault();
-    const hired = await api<Employee>("POST", `/api/departments/${department.id}/employees`, { name, focus });
-    showToast(`${hired.name} joined ${department.name} at desk ${hired.deskIndex + 1}.`);
-    setName("");
-    setFocus("");
-    setHiring(false);
+    if (saving) return;
+    setSaving(true);
+    try {
+      const hired = await api<Employee>("POST", `/api/departments/${department.id}/employees`, { name, focus });
+      showToast(`${hired.name} joined ${department.name} at desk ${hired.deskIndex + 1}.`);
+      setName("");
+      setFocus("");
+      setHiring(false);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const temps = department.headcount - staff.length;
@@ -750,7 +821,7 @@ function TeamSection({ department, staff, tasks }: { department: Department; sta
             <button type="button" className="btn btn--ghost" onClick={() => setHiring(false)}>
               Cancel
             </button>
-            <button className="btn btn--primary" type="submit">
+            <button className="btn btn--primary" type="submit" disabled={saving}>
               Hire
             </button>
           </div>
@@ -791,9 +862,17 @@ function EmployeeRow({ employee, tasks }: { employee: Employee; tasks: Task[] })
     setMode("view");
   };
 
+  // One flag for both fire buttons. The row unmounts on success, so the finally may run after that (harmless).
+  const [firing, setFiring] = useState(false);
   const fire = async (deleteNotes: boolean) => {
-    await api("DELETE", `/api/employees/${employee.id}?deleteNotes=${deleteNotes}`);
-    showToast(deleteNotes ? `${employee.name} has left, and their notes are deleted.` : `${employee.name} has left. Their notes are kept.`);
+    if (firing) return;
+    setFiring(true);
+    try {
+      await api("DELETE", `/api/employees/${employee.id}?deleteNotes=${deleteNotes}`);
+      showToast(deleteNotes ? `${employee.name} has left, and their notes are deleted.` : `${employee.name} has left. Their notes are kept.`);
+    } finally {
+      setFiring(false);
+    }
   };
 
   if (mode === "edit") {
@@ -850,10 +929,10 @@ function EmployeeRow({ employee, tasks }: { employee: Employee; tasks: Task[] })
               <button type="button" className="btn btn--ghost btn--sm" onClick={() => setMode("view")}>
                 Cancel
               </button>
-              <button type="button" className="btn btn--danger btn--ghost btn--sm" onClick={() => fire(false)}>
+              <button type="button" className="btn btn--danger btn--ghost btn--sm" onClick={() => fire(false)} disabled={firing}>
                 Fire, keep notes
               </button>
-              <button type="button" className="btn btn--danger btn--sm" onClick={() => fire(true)}>
+              <button type="button" className="btn btn--danger btn--sm" onClick={() => fire(true)} disabled={firing}>
                 Fire and delete notes
               </button>
             </div>
@@ -987,9 +1066,13 @@ function ScheduleForm({
         : kind === "after"
           ? { kind, scheduleId: leader }
           : { kind, hours };
+  // The values the form opened with, so Esc or ✕ on the window can ask before throwing edits away.
+  const startedWith = useRef(JSON.stringify([title, brief, employee, cadence()]));
+  useUnsaved(JSON.stringify([title, brief, employee, cadence()]) !== startedWith.current);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (saving) return;
     setSaving(true);
     try {
       await onSubmit({ title, brief, cadence: cadence(), employee });
@@ -1171,6 +1254,13 @@ function ScheduleRow({ schedule, staff }: { schedule: Schedule; staff: Employee[
     const names = rest.map(({ schedule: f }) => s.snapshot?.employees.find((e) => e.id === f.employeeId)?.name ?? f.title);
     return `Start it now, then ${names.join(", then ")}`;
   });
+  // "Theo → Tariq": the schedules that run after this one, so pausing or removing it says they stop too.
+  const followers = useStore((s) =>
+    chainFrom(schedule, s.snapshot?.schedules ?? [])
+      .slice(1)
+      .map(({ schedule: f }) => s.snapshot?.employees.find((e) => e.id === f.employeeId)?.name ?? f.title)
+      .join(" → "),
+  );
   // Mirrors stillOpen() in server/schedules.ts:199-203: retries count too.
   const running = useStore(
     (s) => s.snapshot?.tasks.some((t) => t.scheduleId === schedule.id && (t.status === "queued" || t.status === "working")) ?? false,
@@ -1196,7 +1286,8 @@ function ScheduleRow({ schedule, staff }: { schedule: Schedule; staff: Employee[
     }
   };
   const remove = async () => {
-    if (!confirm(`Remove the recurring task "${schedule.title}"?`)) return;
+    const stops = followers ? `\n\n${followers} run after it and will stop too.` : "";
+    if (!confirm(`Remove the recurring task "${schedule.title}"?${stops}`)) return;
     await api("DELETE", `/api/schedules/${schedule.id}`);
   };
   const save = async (values: ScheduleValues) => {
@@ -1226,8 +1317,21 @@ function ScheduleRow({ schedule, staff }: { schedule: Schedule; staff: Employee[
         <strong>{schedule.title}</strong>
         <small>
           {employee ? `${employee.name} · ` : ""}
-          {leader ? `After "${leader.title}"` : describeCadence(schedule.cadence)} ·{" "}
-          {!schedule.enabled ? "paused" : leaderId ? "starts when it finishes" : `next ${formatWhen(schedule.nextRunAt)}`}
+          {/* The server only starts a follower whose leader exists and runs (server/schedules.ts startFollowers). */}
+          {leaderId && !leader ? (
+            <span className="command__warn">⚠️ Its leader was removed, so this never runs. Edit it to pick a new one.</span>
+          ) : (
+            <>
+              {leader ? `After "${leader.title}"` : describeCadence(schedule.cadence)} ·{" "}
+              {!schedule.enabled
+                ? "paused"
+                : leader && !leader.enabled
+                  ? "waits: its leader is paused"
+                  : leaderId
+                    ? "starts when it finishes"
+                    : `next ${formatWhen(schedule.nextRunAt)}`}
+            </>
+          )}
           {schedule.lastRunAt ? ` · last ${formatWhen(schedule.lastRunAt)}` : ""}
           {lastTask && (
             <>
@@ -1252,7 +1356,12 @@ function ScheduleRow({ schedule, staff }: { schedule: Schedule; staff: Employee[
         <button type="button" className="btn btn--ghost btn--sm" onClick={() => setEditing(true)}>
           Edit
         </button>
-        <button type="button" className="btn btn--ghost btn--sm" onClick={toggle}>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={toggle}
+          title={schedule.enabled && followers ? `Also stops: ${followers}` : undefined}
+        >
           {schedule.enabled ? "Pause" : "Resume"}
         </button>
         <button type="button" className="btn btn--ghost btn--danger btn--sm" onClick={remove} aria-label="Remove">

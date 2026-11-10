@@ -6,6 +6,7 @@ import {
   failureKind,
   INTERRUPTED_PREFIX,
   KIND_RANK,
+  NEEDS_YOU_WINDOW_MS,
   resetHint,
   scheduleLabel,
   skippedFollowers,
@@ -14,8 +15,6 @@ import { waitReasons } from "../queue";
 import { api, useStore } from "../store";
 import { Elapsed, usualRun } from "./Elapsed";
 import { formatWhen } from "./Modals";
-
-const NEEDS_YOU_WINDOW_MS = 24 * 60 * 60 * 1000; // failed tasks older than this stay in "Recent"
 
 const STATUS_LABEL: Record<Task["status"], string> = {
   queued: "Waiting",
@@ -29,7 +28,15 @@ export function TaskBoard({ snapshot }: { snapshot: Snapshot }) {
   const openModal = useStore((s) => s.openModal);
   const setBoardOpen = useStore((s) => s.setBoardOpen);
   const seenFailed = useStore((s) => s.seenFailed);
+  const selectTask = useStore((s) => s.selectTask);
   const aiOffice = snapshot.settings.aiOffice;
+  // While the AI office is off the prop hides office tasks, but running ones carry on and may ask for an OK.
+  // Read from the raw store; primitives only, so these don't re-render the board on every snapshot.
+  const hiddenRunning = useStore((s) =>
+    aiOffice ? 0 : (s.snapshot?.tasks.filter((t) => !isClaudeCode(t) && (t.status === "working" || t.status === "queued")).length ?? 0),
+  );
+  const hiddenAsking = useStore((s) => (aiOffice ? 0 : (s.snapshot?.tasks.filter((t) => !isClaudeCode(t) && t.approval).length ?? 0)));
+  const firstAsking = useStore((s) => (aiOffice ? undefined : s.snapshot?.tasks.find((t) => !isClaudeCode(t) && t.approval)?.id));
   const departments = new Map(snapshot.departments.map((d) => [d.id, d]));
   const officeDepartments = snapshot.departments.filter((d) => !isClaudeCode(d));
   const officeTasks = snapshot.tasks.filter((t) => !isClaudeCode(t));
@@ -111,6 +118,21 @@ export function TaskBoard({ snapshot }: { snapshot: Snapshot }) {
       <div className="board__scroll">
         {!aiOffice ? (
           <>
+            {(hiddenRunning > 0 || hiddenAsking > 0) && (
+              <p className="hint board__empty">
+                {hiddenRunning > 0 &&
+                  `🏢 ${hiddenRunning} office task${hiddenRunning === 1 ? " is" : "s are"} still running. Chained steps after them won't start while the AI office is off.`}
+                {firstAsking ? (
+                  <>
+                    {hiddenRunning > 0 ? " " : ""}✋ {hiddenAsking} waiting for your OK:{" "}
+                    <button type="button" className="link" onClick={() => selectTask(firstAsking)}>
+                      answer it
+                    </button>
+                    .
+                  </>
+                ) : null}
+              </p>
+            )}
             {overdue.length > 0 && (
               <p className="hint board__empty">
                 ⏰ {overdue.length} recurring task{overdue.length === 1 ? "" : "s"} came due while the AI office was off: “
@@ -129,7 +151,7 @@ export function TaskBoard({ snapshot }: { snapshot: Snapshot }) {
               </p>
             )}
           </>
-        ) :officeDepartments.length === 0 ? (
+        ) : officeDepartments.length === 0 ? (
           <p className="muted board__empty">No departments yet. Ask the manager to open one, or add it yourself.</p>
         ) : (
           <ul className="dept-list">
@@ -141,7 +163,7 @@ export function TaskBoard({ snapshot }: { snapshot: Snapshot }) {
                   <button
                     className="dept-row"
                     onClick={() => openModal({ type: "department", departmentId: d.id })}
-                    title={`${d.name}: ${d.genre}${staff ? ` · ${staff} on staff` : ""}`}
+                    title={`${d.name}: ${d.genre}${staff ? ` · ${staff} on staff` : ""}${d.codeAccess ? " · can change Siverse's code" : ""}`}
                   >
                     <span className="dot" style={{ background: d.color }} />
                     <span className="dept-row__name">
@@ -303,6 +325,7 @@ function TaskSection({
               />
               {repeats ? ` · failed ${repeats.length + 1}×` : ""}
               {chipTask !== task && latest !== "other" ? ` · latest: ${FAILURE_CHIP[latest]}` : ""}
+              {task.commandRuns?.some((r) => r.outcome === "no-answer") ? " · ⌛ missed OK" : ""}
             </span>
             {task.status === "working" && task.activity.length > 0 && (
               <span className="task-card__activity">{task.activity.at(-1)}</span>

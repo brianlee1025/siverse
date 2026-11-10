@@ -4,7 +4,7 @@ import type { CommandView, Snapshot, Task } from "../../shared/types";
 import { describeCadence, isClaudeCode } from "../../shared/types";
 import { inkFor } from "../colors";
 import { useDraft } from "../drafts";
-import { failureKind, resetHint, scheduleLabel, skippedFollowers, splitBrief } from "../failures";
+import { APPROVAL_TIMEOUT_MINUTES, failureKind, resetHint, scheduleLabel, skippedFollowers, splitBrief } from "../failures";
 import { api, useStore } from "../store";
 import { DriveMarkdown } from "./DriveMarkdown";
 import { Elapsed } from "./Elapsed";
@@ -57,7 +57,12 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
   // "Send worker home" on a long run asks once more; the question goes away by itself after a few seconds.
   const [confirming, setConfirming] = useState(false);
   const keepWorking = useRef<HTMLButtonElement>(null);
-  useEffect(() => setConfirming(false), [selectedTaskId]);
+  // Set while a cancel or retry is on its way, so a double-click sends one request.
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setConfirming(false);
+    setBusy(false);
+  }, [selectedTaskId]);
   useEffect(() => {
     if (!confirming) return;
     keepWorking.current?.focus(); // so a double-click or Enter doesn't confirm
@@ -72,14 +77,24 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
   const schedule = task.scheduleId ? snapshot.schedules.find((s) => s.id === task.scheduleId) : undefined;
   const canFollowUp = !fromClaudeCode && !active && Boolean(department) && snapshot.settings.aiOffice;
 
-  const cancel = () => api("POST", `/api/tasks/${task.id}/cancel`);
+  const once = async (send: () => Promise<unknown>) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await send();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const cancel = () => once(() => api("POST", `/api/tasks/${task.id}/cancel`));
   // A queued task, or one that only just started, has little to lose: it goes at once.
   const askFirst = task.status === "working" && Boolean(task.startedAt) && Date.now() - (task.startedAt ?? 0) > ASK_AFTER_MS;
   const brief = task.brief ? splitBrief(task.brief) : undefined;
-  const retry = async () => {
-    const next = await api<{ id: string }>("POST", `/api/tasks/${task.id}/retry`);
-    selectTask(next.id);
-  };
+  const retry = () =>
+    once(async () => {
+      const next = await api<{ id: string }>("POST", `/api/tasks/${task.id}/retry`);
+      selectTask(next.id);
+    });
   // A failure gets the fix that suits it: resume, wait for the plan, check Settings, or split the task.
   const kind = task.status === "failed" ? failureKind(task.error) : "other";
   const skipped = skippedFollowers(task, snapshot.schedules, snapshot.tasks);
@@ -220,7 +235,7 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
           (confirming ? (
             <span className="task-detail__confirm">
               Send {task.workerName ?? "them"} home?
-              <button className="btn btn--danger btn--sm" onClick={cancel}>
+              <button className="btn btn--danger btn--sm" onClick={cancel} disabled={busy}>
                 Yes
               </button>
               <button ref={keepWorking} className="btn btn--ghost btn--sm" onClick={() => setConfirming(false)}>
@@ -228,7 +243,7 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
               </button>
             </span>
           ) : (
-            <button className="btn btn--danger btn--sm" onClick={askFirst ? () => setConfirming(true) : cancel}>
+            <button className="btn btn--danger btn--sm" onClick={askFirst ? () => setConfirming(true) : cancel} disabled={busy}>
               {task.status === "working" ? "Send worker home" : "Cancel task"}
             </button>
           ))}
@@ -237,8 +252,9 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
             Open Settings
           </button>
         )}
-        {(task.status === "failed" || task.status === "cancelled") && (
-          <button className={`btn btn--sm ${retryFirst ? "btn--primary" : "btn--ghost"}`} onClick={retry}>
+        {/* Off: the server refuses a retry (requireAiOffice on /retry), so don't offer it. */}
+        {(task.status === "failed" || task.status === "cancelled") && snapshot.settings.aiOffice && (
+          <button className={`btn btn--sm ${retryFirst ? "btn--primary" : "btn--ghost"}`} onClick={retry} disabled={busy}>
             {kind === "interrupted" ? "Resume" : "Try again"}
           </button>
         )}
@@ -247,9 +263,6 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
-// Must match APPROVAL_TIMEOUT_MS in server/commands.ts:26 (off-limits to the office's workers). Kept here,
-// not in shared/types.ts, because the server's tsx watch restarts on any change to a file it imports.
-const APPROVAL_TIMEOUT_MINUTES = 30;
 const URGENT_MINUTES = 5;
 const MAX_EARLIER_ANSWERS = 3;
 

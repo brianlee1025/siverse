@@ -171,6 +171,7 @@ interface StaffMemberProps {
   task: Task | undefined; // what they are working on right now
   lastTask: Task | undefined; // their latest finished (done or failed) task
   waiting: number; // their tasks still in the queue
+  unseenFailure: boolean; // lastTask failed in the last 24 h and the boss hasn't opened it (board's "Needs you" rule)
   selected: boolean;
   onSelect: (taskId: string) => void;
 }
@@ -189,6 +190,7 @@ export const StaffMember = memo(function StaffMember({
   task,
   lastTask,
   waiting,
+  unseenFailure,
   selected,
   onSelect,
 }: StaffMemberProps) {
@@ -291,11 +293,13 @@ export const StaffMember = memo(function StaffMember({
 
   const recent = !task && lastTask && Date.now() < momentEnds ? lastTask : undefined;
   const recentFailed = recent?.status === "failed";
+  // After the 15 s moment, a failure the boss hasn't opened stays up (short text: the title is in the tooltip).
+  const flagged = !task && !recent && unseenFailure && lastTask ? lastTask : undefined;
   const click = () =>
     task
       ? onSelect(task.id)
-      : recent
-        ? onSelect(recent.id)
+      : recent || flagged
+        ? onSelect((recent ?? flagged)!.id) // opening it marks it seen (store.selectTask), which clears the flag
         : openModal({ type: "department", departmentId: department.id });
   const asking = Boolean(task?.approval);
   const text = asking
@@ -304,13 +308,15 @@ export const StaffMember = memo(function StaffMember({
       ? task.activity.at(-1)
       : recent
         ? `${recentFailed ? "⚠️ Couldn't finish" : "✅ Done"}: ${shorten(recent.title)}`
-        : waiting > 0
+        : flagged
+          ? "⚠️ Couldn't finish"
+          : waiting > 0
           ? `📋 ${waiting} waiting for me`
           : lastTask
             ? `☕ last: ${shorten(lastTask.title)}`
             : undefined;
   // Only "☕ last: …": the name shows, the text waits for hover. "📋 waiting for me" and ✅/⚠️ keep theirs.
-  const quiet = !task && !recent && waiting === 0 && Boolean(lastTask);
+  const quiet = !task && !recent && !flagged && waiting === 0 && Boolean(lastTask);
   return (
     <group
       ref={group}
@@ -330,9 +336,13 @@ export const StaffMember = memo(function StaffMember({
       )}
       <Html position={[0, bubbleHeight(employee.deskIndex), 0]} center distanceFactor={14} zIndexRange={BUBBLE_Z}>
         <div
-          className={`bubble${task || recent ? "" : " bubble--idle"}${quiet ? " bubble--quiet" : ""}${asking ? " bubble--ask" : recentFailed ? " bubble--failed" : ""}${selected ? " bubble--selected" : ""}`}
+          className={`bubble${task || recent || flagged ? "" : " bubble--idle"}${quiet ? " bubble--quiet" : ""}${asking ? " bubble--ask" : recentFailed || flagged ? " bubble--failed" : ""}${selected ? " bubble--selected" : ""}`}
           onClick={click}
-          title={`${employee.name} · ${employee.focus}`}
+          title={
+            flagged
+              ? `${employee.name} · ${flagged.title}: couldn't finish. Click to open it.`
+              : `${employee.name} · ${employee.focus}`
+          }
         >
           <span className="bubble__name" style={{ color: inkFor(department.color) }}>
             ★ {employee.name}
