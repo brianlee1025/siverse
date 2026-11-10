@@ -8,6 +8,7 @@ dist/
 *.siverse-backup
 coverage/
 .vscode/
+*.code-workspace
 
 # Local company data: settings (may hold your API key), chat history, memory, work output
 data/
