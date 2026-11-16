@@ -2,13 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Snapshot } from "../shared/types";
 import { isClaudeCode } from "../shared/types";
 import { OfficeScene } from "./scene/OfficeScene";
-import { useStore, type Toast as ToastItem } from "./store";
+import { LIGHT_PINS, useStore, type LightPin, type Toast as ToastItem } from "./store";
 import { ChatPanel } from "./ui/ChatPanel";
+import { minutesLeft, URGENT_MINUTES } from "./failures";
 import { ErrorBoundary } from "./ui/ErrorBoundary";
 import { Modals } from "./ui/Modals";
 import { TaskBoard } from "./ui/TaskBoard";
 import { TaskDetail } from "./ui/TaskDetail";
 import { TopBar } from "./ui/TopBar";
+import { WelcomeBack } from "./ui/WelcomeBack";
+import { canWalk, WalkHud } from "./world/WalkHud";
 
 export function App() {
   const raw = useStore((s) => s.snapshot);
@@ -38,6 +41,8 @@ export function App() {
   }, [snapshot, openModal]);
 
   // Links into the office: ?open=drive | department:<id> | file:<path>, and ?task=<id> or #task=<id>.
+  // Also ?phase=morning|day|evening|night (lighting, this visit only), ?view=outside (start zoomed out),
+  // ?view=walk (start in walk mode) and ?colliders (draw the walk-mode colliders).
   // Read once, on the first snapshot, then wiped from the address bar so a reload doesn't reopen them.
   const checkedLink = useRef(false);
   useEffect(() => {
@@ -47,7 +52,15 @@ export function App() {
     const hash = new URLSearchParams(location.hash.slice(1));
     const open = params.get("open");
     const taskId = params.get("task") ?? hash.get("task");
-    if (!open && !taskId) return;
+    const phase = params.get("phase");
+    const view = params.get("view");
+    const colliders = params.has("colliders");
+    if (!open && !taskId && !phase && !view && !colliders) return;
+    if (colliders) useStore.setState({ showColliders: true });
+    // Not saved: a link pins the lighting for this visit only (Settings saves it).
+    if (phase && phase !== "auto" && (LIGHT_PINS as readonly string[]).includes(phase)) useStore.setState({ lightPin: phase as LightPin });
+    if (view === "outside") useStore.setState({ startOutside: true });
+    if (view === "walk" && canWalk()) useStore.getState().setViewMode("walk");
     if (open === "drive") openModal({ type: "drive" });
     else if (open?.startsWith("department:")) {
       const id = open.slice("department:".length);
@@ -81,6 +94,8 @@ export function App() {
           <ErrorBoundary name="3D office" resetKey={sceneKey} onClose={() => setSceneKey((k) => k + 1)} action="Reload 3D" center>
             <OfficeScene key={sceneKey} snapshot={snapshot} />
           </ErrorBoundary>
+          <WelcomeBack />
+          <WalkHud />
           <ErrorBoundary name="task card" resetKey={selectedTaskId} onClose={() => selectTask(null)}>
             {/* Off: the board hides office tasks, but a running worker can still ask for an OK, and the
                 approval route doesn't need the office on. */}
@@ -151,6 +166,28 @@ function Toasts() {
 
 const TOAST_MS = 4500;
 
+/**
+ * "· 4 min left" on the sticky approval toast: the soonest deadline of all open office asks (that's the one
+ * about to be lost). Its own 15 s clock, because snapshots only arrive when something changes.
+ */
+function StickyLeft() {
+  const soonest = useStore((s) =>
+    Math.min(...(s.snapshot?.tasks ?? []).filter((t) => t.approval && !isClaudeCode(t)).map((t) => t.approval!.requestedAt)),
+  );
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(timer);
+  }, []);
+  if (!Number.isFinite(soonest)) return null;
+  const left = minutesLeft(soonest, now);
+  return (
+    <span className={left <= URGENT_MINUTES ? "toast__urgent" : undefined}>
+      {left <= 0 ? " · about to time out" : ` · ${left} min left`}
+    </span>
+  );
+}
+
 function Toast({ toast }: { toast: ToastItem }) {
   const dismissToast = useStore((s) => s.dismissToast);
   const selectTask = useStore((s) => s.selectTask);
@@ -187,6 +224,7 @@ function Toast({ toast }: { toast: ToastItem }) {
           }}
         >
           {toast.text}
+          <StickyLeft />
         </button>
         <button className="icon-btn toast__close" onClick={() => dismissToast(toast.id)} aria-label="Dismiss">
           ✕

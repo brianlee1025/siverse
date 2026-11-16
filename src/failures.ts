@@ -29,6 +29,11 @@ export function splitBrief(brief: string): { ask: string; notes: { label: string
 // Must match APPROVAL_TIMEOUT_MS in server/commands.ts:26 (off-limits to the office's workers). Kept in src/,
 // not in shared/types.ts, because the server's tsx watch restarts on any change to a file it imports.
 export const APPROVAL_TIMEOUT_MINUTES = 30;
+/** Minutes left to answer an approval asked at `requestedAt` (≤ 0: about to time out). */
+export const minutesLeft = (requestedAt: number, now = Date.now()) =>
+  Math.ceil((requestedAt + APPROVAL_TIMEOUT_MINUTES * 60_000 - now) / 60_000);
+/** From here on, the deadline shows in bold (task card and sticky toast). */
+export const URGENT_MINUTES = 5;
 
 // Failed tasks older than this leave the board's "Needs you" for "Recent", and stop being flagged in the 3D office.
 export const NEEDS_YOU_WINDOW_MS = 24 * 60 * 60 * 1000;

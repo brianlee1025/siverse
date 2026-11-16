@@ -215,6 +215,7 @@ export const StaffMember = memo(function StaffMember({
   const motion = useRef<Motion>({ walking: false, sitting: false, typing: false });
   const nav = useRef({ waypoints: [] as Vector3[], index: 0 });
   const restUntil = useRef(0);
+  const bubbleRef = useRef<HTMLDivElement>(null);
 
   const here = (): Vec2 => [group.current?.position.x ?? 0, group.current?.position.z ?? 0];
   const go = (points: Vec2[]) => {
@@ -263,6 +264,9 @@ export const StaffMember = memo(function StaffMember({
     if (!g || !seat) return;
     const m = motion.current;
     const n = nav.current;
+    // Walking hides the long part of the bubble (.bubble--moving). Toggled every frame rather than on change:
+    // a re-render rewrites className and drops the class, and toggle() with the same value is a no-op.
+    bubbleRef.current?.classList.toggle("bubble--moving", n.index < n.waypoints.length);
     if (n.index < n.waypoints.length) {
       walk(g, n, delta);
       pose(m, "walking");
@@ -307,7 +311,7 @@ export const StaffMember = memo(function StaffMember({
     : task
       ? task.activity.at(-1)
       : recent
-        ? `${recentFailed ? "⚠️ Couldn't finish" : "✅ Done"}: ${shorten(recent.title)}`
+        ? null // two spans, below: the title part hides while walking
         : flagged
           ? "⚠️ Couldn't finish"
           : waiting > 0
@@ -336,6 +340,7 @@ export const StaffMember = memo(function StaffMember({
       )}
       <Html position={[0, bubbleHeight(employee.deskIndex), 0]} center distanceFactor={14} zIndexRange={BUBBLE_Z}>
         <div
+          ref={bubbleRef}
           className={`bubble${task || recent || flagged ? "" : " bubble--idle"}${quiet ? " bubble--quiet" : ""}${asking ? " bubble--ask" : recentFailed || flagged ? " bubble--failed" : ""}${selected ? " bubble--selected" : ""}`}
           onClick={click}
           title={
@@ -347,7 +352,14 @@ export const StaffMember = memo(function StaffMember({
           <span className="bubble__name" style={{ color: inkFor(department.color) }}>
             ★ {employee.name}
           </span>
-          {text && <span className="bubble__text">{text}</span>}
+          {recent && !asking ? (
+            <span className="bubble__text">
+              {recentFailed ? "⚠️ Couldn't finish" : "✅ Done"}
+              <span className="bubble__more">: {shorten(recent.title)}</span>
+            </span>
+          ) : (
+            text && <span className="bubble__text">{text}</span>
+          )}
         </div>
       </Html>
     </group>

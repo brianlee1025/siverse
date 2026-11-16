@@ -57,8 +57,29 @@ function saveSeenFailed(ids: string[]) {
   }
 }
 
+/** How the office is lit in this browser: follow the local clock, or pin one phase. */
+export const LIGHT_PINS = ["auto", "morning", "day", "evening", "night"] as const;
+export type LightPin = (typeof LIGHT_PINS)[number];
+const LIGHT_PIN_KEY = "siverse.lightPin";
+
+function loadLightPin(): LightPin {
+  try {
+    const value = localStorage.getItem(LIGHT_PIN_KEY);
+    return (LIGHT_PINS as readonly string[]).includes(value ?? "") ? (value as LightPin) : "auto";
+  } catch {
+    return "auto";
+  }
+}
+
 interface UIState {
   snapshot: Snapshot | null;
+  lightPin: LightPin;
+  setLightPin: (pin: LightPin) => void; // saved in this browser
+  startOutside: boolean; // ?view=outside: CameraRig frames from further out once, then clears it
+  showColliders: boolean; // ?colliders: draw the walk-mode colliders on the floor (not saved)
+  viewMode: "office" | "walk"; // walk = first-person (not saved; ?view=walk starts in it)
+  setViewMode: (mode: UIState["viewMode"]) => void;
+  walkNote: string | null; // a note on the walk HUD (e.g. mouse look unavailable)
   connected: boolean;
   selectedTaskId: string | null;
   modal: Modal | null;
@@ -85,6 +106,20 @@ let nextToastId = 1;
 
 export const useStore = create<UIState>((set, get) => ({
   snapshot: null,
+  lightPin: loadLightPin(),
+  setLightPin: (lightPin) => {
+    try {
+      localStorage.setItem(LIGHT_PIN_KEY, lightPin);
+    } catch {
+      // Private mode or full storage: the choice just won't survive a reload.
+    }
+    set({ lightPin });
+  },
+  startOutside: false,
+  showColliders: false,
+  viewMode: "office",
+  setViewMode: (viewMode) => set({ viewMode, walkNote: null }),
+  walkNote: null,
   connected: false,
   selectedTaskId: null,
   modal: null,

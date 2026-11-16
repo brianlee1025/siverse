@@ -169,6 +169,32 @@ code {
 .icon-btn:hover {
   background: var(--panel-2);
 }
+/* One focus ring for every control reached by keyboard (mouse clicks don't show it). */
+.btn:focus-visible,
+.icon-btn:focus-visible,
+.tab:focus-visible,
+.task-card:focus-visible,
+.dept-row:focus-visible,
+.zone-sign:focus-visible,
+.link:focus-visible,
+.suggestion:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Headings that only receive focus from code (the task card moves focus to its title for screen
+   readers) don't need a visible ring; they can't be tabbed to. */
+[tabindex="-1"]:focus {
+  outline: none;
+}
+.btn--primary {
+  box-shadow: 0 1px 2px rgba(59, 91, 219, 0.25), 0 4px 12px rgba(59, 91, 219, 0.18);
+}
+
+/* Thin, warm scrollbars in the side panels and windows. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d6ccbd transparent;
+}
 
 .link {
   border: none;
@@ -215,6 +241,38 @@ code {
   background: #fff1e6;
   color: var(--warn);
 }
+/* A leading dot in the pill's own colour, so status reads by shape and colour, not just the word.
+   "Working" and "needs your OK" pulse gently (not with reduced motion). */
+.pill::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 1px;
+}
+.pill--done::before {
+  /* a tick-like ring instead of a dot */
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+.pill--failed::before {
+  border-radius: 1px;
+  transform: rotate(45deg);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .pill--working::before,
+  .pill--ask::before {
+    animation: pill-pulse 1.6s ease-in-out infinite;
+  }
+}
+@keyframes pill-pulse {
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 22%, transparent);
+  }
+}
 
 .dot {
   width: 10px;
@@ -232,6 +290,9 @@ code {
   padding: 0 16px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 2px 10px rgba(35, 38, 45, 0.05);
+  position: relative;
+  z-index: 2; /* its shadow falls over the panels below */
   min-width: 0;
 }
 .topbar__brand {
@@ -256,7 +317,15 @@ code {
   font-size: 12px;
 }
 .topbar__logo {
-  font-size: 26px;
+  font-size: 20px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: linear-gradient(145deg, #fff6e8, #f0e2cc);
+  box-shadow: inset 0 0 0 1px var(--line);
+  flex: none;
 }
 .topbar__stats {
   display: flex;
@@ -271,12 +340,14 @@ code {
 }
 .stat strong {
   font-size: 17px;
+  font-variant-numeric: tabular-nums;
 }
 .stat span {
-  font-size: 11px;
+  font-size: 10.5px;
+  font-weight: 600;
   color: var(--ink-3);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
 }
 .topbar__actions {
   display: flex;
@@ -439,8 +510,14 @@ code {
   cursor: pointer;
   text-align: left;
 }
+.dept-row {
+  transition: background 0.15s ease;
+}
 .dept-row:hover {
   background: var(--panel-2);
+}
+.dept-row .dot {
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px var(--line);
 }
 .dept-row__name {
   flex: 1;
@@ -467,11 +544,12 @@ code {
 }
 
 .task-section h4 {
-  margin: 16px 6px 8px;
-  font-size: 12px;
+  margin: 18px 6px 8px;
+  font-size: 11.5px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--ink-2);
+  letter-spacing: 0.07em;
+  color: var(--ink-3);
 }
 .task-card {
   width: 100%;
@@ -484,14 +562,18 @@ code {
   background: var(--panel);
   border-radius: 10px;
   padding: 9px 10px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   cursor: pointer;
+  box-shadow: 0 1px 2px rgba(35, 38, 45, 0.04);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 .task-card:hover {
-  background: var(--panel-2);
+  background: var(--panel);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(35, 38, 45, 0.05), 0 8px 18px rgba(35, 38, 45, 0.08);
 }
 .task-card--selected {
-  box-shadow: 0 0 0 2px var(--accent);
+  box-shadow: 0 0 0 2px var(--accent), 0 8px 18px rgba(59, 91, 219, 0.12);
 }
 .task-card__top {
   display: flex;
@@ -926,10 +1008,10 @@ code {
   gap: 1px;
   width: max-content;
   max-width: 190px;
-  background: rgba(255, 253, 249, 0.96);
+  background: rgba(255, 253, 249, 0.97);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 5px 8px;
+  border-radius: 12px;
+  padding: 5px 9px;
   font-size: 11.5px;
   line-height: 1.3;
   box-shadow: var(--shadow);
@@ -1001,6 +1083,98 @@ code {
 .bubble--manager .bubble__name {
   color: #3f6f68;
 }
+/* Walking: the 15 s "Done: <title>" moment drops the title, so it doesn't clip at the board or chat edge. */
+.bubble--moving .bubble__more {
+  display: none;
+}
+/* Zoomed out to the outside view (world/Exterior.tsx): the roof covers the room, so its labels go too. */
+.scene--outside .bubble,
+.scene--outside .nameplate,
+.scene--outside .zone-sign,
+.scene--outside .zone-placeholder,
+/* Walking on the sidewalk (world/WalkControls.tsx): the walls are between you and the labels. */
+.scene--street .bubble,
+.scene--street .nameplate,
+.scene--street .zone-sign,
+.scene--street .zone-placeholder {
+  visibility: hidden;
+}
+
+/* ---------- Walk mode HUD (world/WalkHud.tsx) ---------- */
+.walk-btn {
+  position: absolute;
+  z-index: 21;
+  left: 12px;
+  bottom: 12px;
+}
+.walk-lock {
+  position: absolute;
+  inset: 0;
+  z-index: 20; /* above the canvas, under the welcome card (30) and the task card (40) */
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: rgba(35, 38, 45, 0.28);
+  color: #fff;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.walk-lock span {
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: rgba(35, 38, 45, 0.75);
+}
+.walk-hint {
+  position: absolute;
+  z-index: 21;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(35, 38, 45, 0.75);
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.walk-note,
+.walk-ask {
+  position: absolute;
+  z-index: 21;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  pointer-events: none;
+}
+.walk-note {
+  background: rgba(35, 38, 45, 0.75);
+  color: #fff;
+}
+.walk-ask {
+  top: 48px;
+  background: color-mix(in srgb, var(--warn) 18%, white);
+  border: 1px solid var(--warn);
+  color: var(--ink);
+}
+.walk-dot {
+  position: absolute;
+  z-index: 21;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
 
 .nameplate {
   background: var(--ink);
@@ -1012,18 +1186,25 @@ code {
   white-space: nowrap;
 }
 
+/* A hanging sign: white card, a bar in the department's colour (--zone, set inline) along the top. */
 .zone-sign {
+  --zone: var(--ink-3);
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 1px;
   background: var(--panel);
-  border: 2px solid;
-  border-radius: 10px;
-  padding: 5px 12px;
+  border: 1px solid color-mix(in srgb, var(--zone) 35%, var(--line));
+  border-radius: 12px;
+  padding: 8px 14px 6px;
   cursor: pointer;
   white-space: nowrap;
-  box-shadow: var(--shadow);
+  box-shadow: inset 0 4px 0 var(--zone), 0 2px 4px rgba(35, 38, 45, 0.08), 0 10px 24px rgba(35, 38, 45, 0.1);
+  transition: box-shadow 0.15s ease, translate 0.15s ease;
+}
+.zone-sign:hover {
+  translate: 0 -2px;
+  box-shadow: inset 0 4px 0 var(--zone), 0 4px 8px rgba(35, 38, 45, 0.1), 0 14px 30px rgba(35, 38, 45, 0.14);
 }
 .zone-sign strong {
   font-size: 14px;
@@ -1413,7 +1594,8 @@ code {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(35, 38, 45, 0.35);
+  background: rgba(35, 38, 45, 0.32);
+  backdrop-filter: blur(2px);
   display: grid;
   place-items: center;
   padding: 16px;
@@ -1424,10 +1606,42 @@ code {
   max-height: calc(100vh - 32px);
   background: var(--panel);
   border-radius: 18px;
-  box-shadow: 0 30px 80px rgba(35, 38, 45, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 2px 6px rgba(35, 38, 45, 0.08), 0 30px 80px rgba(35, 38, 45, 0.25);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .modal-backdrop {
+    animation: fade-in 0.16s ease-out;
+  }
+  .modal {
+    animation: modal-in 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  }
+  .task-detail {
+    animation: card-in 0.18s ease-out;
+  }
+  .toast {
+    animation: card-in 0.2s ease-out;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+}
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
 }
 .modal--wide {
   width: min(820px, 100%);
@@ -1466,6 +1680,68 @@ code {
 .form--section h3 {
   margin: 0;
   font-size: 15px;
+}
+/* Department window: Team is now the first section, so no divider above it. */
+.modal__body > .form--section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+/* Department window: the settings fold at the bottom, and the recent-work rows. */
+.dept-settings > summary {
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  list-style: none;
+}
+.dept-settings > summary::-webkit-details-marker {
+  display: none;
+}
+.dept-settings > summary::after {
+  content: " ▸";
+  color: var(--ink-3);
+}
+.dept-settings[open] > summary::after {
+  content: " ▾";
+}
+.dept-settings > .form {
+  margin-top: 12px;
+}
+.recent-work h3 {
+  margin: 0 0 8px;
+}
+.recent-work__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.recent-work__row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.recent-work__row:hover,
+.recent-work__row:focus-visible {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.recent-work__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .form label {
   display: flex;
@@ -1617,6 +1893,57 @@ code {
 }
 .toast__open:hover {
   text-decoration: underline;
+}
+/* "While you were away" (ui/WelcomeBack.tsx): top-left over the scene, under the task card, windows and toasts. */
+.welcome {
+  position: absolute;
+  z-index: 30;
+  top: 12px;
+  left: 12px;
+  width: min(300px, calc(100% - 24px));
+  background: var(--panel, #fffdf9);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 8px 8px 8px 14px;
+}
+.welcome__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.welcome__close {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+}
+.welcome__lines {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.welcome__line {
+  display: block;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 4px 0;
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+}
+button.welcome__line {
+  cursor: pointer;
+}
+button.welcome__line:hover {
+  text-decoration: underline;
+}
+/* "· 4 min left": quieter than the ask itself, bold in the last 5 minutes. No new colour (amber + --ink). */
+.toast__open > span {
+  font-weight: 500;
+}
+.toast__open > .toast__urgent {
+  font-weight: 800;
 }
 .toast__close {
   width: 28px;

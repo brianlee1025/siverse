@@ -149,6 +149,16 @@ export function updateSchedule(schedule: Schedule, patch: Partial<ScheduleInput>
 
 export function deleteSchedule(schedule: Schedule) {
   state.schedules = state.schedules.filter((s) => s.id !== schedule.id);
+  // Followers stay, but nothing starts them now (startFollowers needs the leader). Say so where the boss looks.
+  const stranded = state.schedules.filter((s) => s.cadence.kind === "after" && s.cadence.scheduleId === schedule.id);
+  if (stranded.length) {
+    const names = stranded.map((s) => `"${s.title}"`).join(", ");
+    addChat(
+      "system",
+      `⚠️ Removed "${schedule.title}". ${names} ran after it and won't start any more. Edit ${stranded.length === 1 ? "it" : "them"} to pick a new leader or a timetable.`,
+      { tone: "error" },
+    );
+  }
   changed();
 }
 
@@ -223,7 +233,8 @@ function startFollowers(task: Task) {
       // An error, not info: the chat's quiet mode must keep it, or a broken chain goes unnoticed.
       addChat("system", `⏭️ Skipped "${follower.title}": "${leader.title}" didn't finish.`, { tone: "error" });
     } else if (stillOpen(follower)) {
-      addChat("system", `⏭️ Skipped "${follower.title}" in ${department.name}: the last run is still going.`, { tone: "info" });
+      // A skipped run is a lost run (like a late one), so it's an error: quiet mode keeps it.
+      addChat("system", `⏭️ Skipped "${follower.title}" in ${department.name}: the last run is still going.`, { tone: "error" });
     } else {
       startRun(follower, department, task);
       addChat("system", `⛓️ ${department.name} started "${follower.title}" after "${leader.title}" finished.`, { tone: "info" });
@@ -242,7 +253,7 @@ export function tickSchedules(now = Date.now()) {
     changed();
     if (!department) continue;
     if (stillOpen(schedule)) {
-      addChat("system", `⏭️ Skipped "${schedule.title}" in ${department.name}: the last run is still going.`, { tone: "info" });
+      addChat("system", `⏭️ Skipped "${schedule.title}" in ${department.name}: the last run is still going.`, { tone: "error" });
       continue;
     }
     startRun(schedule, department);

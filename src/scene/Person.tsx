@@ -1,6 +1,7 @@
 import { useRef, type RefObject } from "react";
 import { useFrame } from "@react-three/fiber";
 import { MathUtils, type Group } from "three";
+import { motion as reducedMotion } from "../motion";
 
 // A low-poly person built from primitives, so the project needs no 3D asset files. The parent
 // drives the pose through a `motion` ref; this component animates limbs to match every frame.
@@ -54,12 +55,14 @@ export function Person({ shirt, skin, hair, longHair, pants = "#3d4451", tie, mo
     legL.current.rotation.x = MathUtils.lerp(legL.current.rotation.x, legBase + swing, k);
     legR.current.rotation.x = MathUtils.lerp(legR.current.rotation.x, legBase - swing, k);
 
-    const armTargetL = m.typing ? -1.15 + Math.sin(t * 16) * 0.09 : -swing * 0.8;
-    const armTargetR = m.typing ? -1.15 + Math.sin(t * 16 + 1.7) * 0.09 : swing * 0.8;
+    // Under reduced motion, seated typists hold still; walkers keep their stride (it shows who's moving).
+    const calm = reducedMotion.reduced;
+    const armTargetL = m.typing ? -1.15 + (calm ? 0 : Math.sin(t * 16) * 0.09) : -swing * 0.8;
+    const armTargetR = m.typing ? -1.15 + (calm ? 0 : Math.sin(t * 16 + 1.7) * 0.09) : swing * 0.8;
     armL.current.rotation.x = MathUtils.lerp(armL.current.rotation.x, armTargetL, k);
     armR.current.rotation.x = MathUtils.lerp(armR.current.rotation.x, armTargetR, k);
 
-    const bob = m.walking ? Math.abs(Math.sin(t * 9)) * 0.05 : m.typing ? Math.sin(t * 2.2) * 0.012 : 0;
+    const bob = m.walking ? Math.abs(Math.sin(t * 9)) * 0.05 : m.typing && !calm ? Math.sin(t * 2.2) * 0.012 : 0;
     body.current.position.y = MathUtils.lerp(body.current.position.y, (m.sitting ? -0.17 : 0) + bob, k);
   });
 

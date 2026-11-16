@@ -80,6 +80,12 @@ export function changed() {
   saveTimer = setTimeout(saveNow, 400);
 }
 
+// state.json is never pruned (tasks and chat only grow), and every save stringifies all of it at once.
+// Say so when it crosses a size where that starts to matter (R2-M37: archive old tasks at about 5 MB).
+const SIZE_STEPS_MB = [2, 5, 10, 20];
+const CHAT_FROM_MB = 5;
+let sizeStep: number | null = null; // steps crossed at the last log (0 = under 2 MB); null = nothing logged yet this run
+
 export function saveNow() {
   clearTimeout(saveTimer);
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -89,8 +95,22 @@ export function saveNow() {
     departments: state.departments.filter((d) => !isClaudeCode(d)),
     tasks: state.tasks.filter((t) => !isClaudeCode(t)),
   };
-  fs.writeFileSync(tmp, JSON.stringify(persisted));
+  const started = performance.now();
+  const json = JSON.stringify(persisted);
+  fs.writeFileSync(tmp, json);
   fs.renameSync(tmp, STATE_FILE);
+  const ms = Math.round(performance.now() - started);
+  const mb = Buffer.byteLength(json) / 1_048_576;
+  const step = SIZE_STEPS_MB.filter((s) => mb >= s).length;
+  if (sizeStep === null || step > sizeStep) {
+    const first = sizeStep === null;
+    sizeStep = step;
+    console.log(`💾 state.json is ${mb.toFixed(1)} MB, saving takes ${ms} ms`);
+    // In the chat only when a big step is crossed during this run (not on every start). addChat → changed()
+    // saves again 400 ms later, which doesn't post again: sizeStep is already raised.
+    if (!first && mb >= CHAT_FROM_MB)
+      addChat("system", `💾 The office's save file is ${mb.toFixed(1)} MB and each save takes ${ms} ms. Archiving old tasks is worth a look.`, { tone: "error" });
+  }
 }
 
 export function snapshot(): Snapshot {

@@ -4,7 +4,7 @@ import type { CommandView, Snapshot, Task } from "../../shared/types";
 import { describeCadence, isClaudeCode } from "../../shared/types";
 import { inkFor } from "../colors";
 import { useDraft } from "../drafts";
-import { APPROVAL_TIMEOUT_MINUTES, failureKind, resetHint, scheduleLabel, skippedFollowers, splitBrief } from "../failures";
+import { failureKind, minutesLeft, URGENT_MINUTES, resetHint, scheduleLabel, skippedFollowers, splitBrief } from "../failures";
 import { api, useStore } from "../store";
 import { DriveMarkdown } from "./DriveMarkdown";
 import { Elapsed } from "./Elapsed";
@@ -263,7 +263,6 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
-const URGENT_MINUTES = 5;
 const MAX_EARLIER_ANSWERS = 3;
 
 /** "Answer within 23 min", on its own slow clock so the card doesn't re-render. */
@@ -273,7 +272,7 @@ function AnswerBy({ requestedAt }: { requestedAt: number }) {
     const timer = setInterval(() => setNow(Date.now()), 15_000);
     return () => clearInterval(timer);
   }, []);
-  const left = Math.ceil((requestedAt + APPROVAL_TIMEOUT_MINUTES * 60_000 - now) / 60_000);
+  const left = minutesLeft(requestedAt, now);
   return (
     <small className={left <= URGENT_MINUTES ? "approval__urgent" : "muted"}>
       {left <= 0 ? "About to time out" : `Answer within ${left} min`}
@@ -284,7 +283,7 @@ function AnswerBy({ requestedAt }: { requestedAt: number }) {
 const time = (at: number) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 /** "14:05" today, else "Mon 19 Oct, 14:05". */
-const when = (at: number) =>
+export const when = (at: number) =>
   new Date(at).toDateString() === new Date().toDateString()
     ? time(at)
     : new Date(at).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });

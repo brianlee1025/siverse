@@ -42,6 +42,24 @@ export interface OfficeLayout {
   door: Vec2;
   corridorX: number;
   cooler: Vec2; // the water cooler, in the gap between the front row's last two zones
+  dividers: Divider[]; // low planters (glass beside the boss) in the back half of the gaps between zones
+  kitchenX: number | undefined; // the coffee corner's x on the back wall (behind the back row's last gap)
+  wallSlots: { x: number; kind: "window" | "art" }[]; // back-wall windows and art, clear of the coffee corner
+  sideWindows: number[]; // z of the left wall's windows
+}
+
+/** Half the door opening: the DoorFrame posts are at ±0.75 and 0.14 wide. */
+export const DOOR_HALF = 0.82;
+/** Sidewalk width outside the front and side walls (outside view). */
+export const SIDEWALK = 4.5;
+/** The street's surface, below the sidewalk. */
+export const STREET_Y = -0.33;
+
+/** A low divider in the gap between two neighbouring zones, running front-to-back (along z). */
+export interface Divider {
+  position: Vec2; // centre
+  length: number;
+  glass: boolean; // the manager's office gets a glass partition instead of a planter
 }
 
 function cellCenter(index: number): Vec2 {
@@ -109,6 +127,31 @@ export function buildLayout(departments: Department[]): OfficeLayout {
   const lastX = Math.max(...frontRow.map((z) => z.center[0]));
   const gapX = frontRow.length > 1 ? lastX - ZONE_W / 2 - GAP / 2 : lastX + ZONE_W / 2 + GAP / 2;
   const cooler: Vec2 = [gapX, frontZ - 0.6];
+  // Dividers only cover the back half of a gap (from the zone's back edge to just past its middle), so
+  // they never meet the cooler (front-row gap, 0.6 behind the front edge) or anyone walking: routes use
+  // the corridors in front of zones and the right-hand corridor, never the gaps beside them.
+  const dividers: Divider[] = [];
+  for (let i = 0; i < cells - 1; i++) {
+    if (i % COLS === COLS - 1) continue; // last column: no right-hand neighbour in this row
+    const [cx, cz] = zoneAt(i).center;
+    const start = cz - ZONE_D / 2 + 0.25;
+    const end = cz + 0.6;
+    dividers.push({ position: [cx + ZONE_W / 2 + GAP / 2, (start + end) / 2], length: end - start, glass: i === 0 });
+  }
+  // The coffee corner stands against the back wall, behind the back row's last gap between zones:
+  // the zone signs float over the zones' back edges, so a gap keeps it in view. Windows and art skip it.
+  const backZ = dividers[0]?.position[1];
+  const kitchenX = dividers.filter((d) => Math.abs(d.position[1] - backZ) < 0.01).at(-1)?.position[0];
+  const wallSlots: { x: number; kind: "window" | "art" }[] = [];
+  for (let i = 0, x = bounds.minX + 2.5; x <= bounds.maxX - 2; i++, x += 2.5) {
+    const kind = i % 2 === 0 ? "window" : "art";
+    const clear = kind === "window" ? 2.9 : 2.1;
+    if (kitchenX === undefined || Math.abs(x - kitchenX) >= clear) wallSlots.push({ x, kind });
+  }
+  const roomDepth = bounds.maxZ - bounds.minZ;
+  const sideWindows = Array.from({ length: Math.max(1, Math.floor(roomDepth / 6)) }, (_, i) => bounds.minZ + 3 + i * 6).filter(
+    (z) => z < bounds.maxZ - 2,
+  );
   return {
     boss,
     departments: map,
@@ -118,8 +161,30 @@ export function buildLayout(departments: Department[]): OfficeLayout {
     door: [corridorX, bounds.maxZ - 0.6],
     corridorX,
     cooler,
+    dividers,
+    kitchenX,
+    wallSlots,
+    sideWindows,
   };
 }
+
+/** Height of the room's walls (the dollhouse's back and left walls, and the outside view's shell). */
+export const WALL_H = 3;
+
+/**
+ * How far back the office-view camera sits to frame `layout.focus` at this aspect ratio. `fit` grows on
+ * narrow viewports (up to ×2 and beyond), `distance` is the framing factor CameraRig applies along
+ * (0.38, 0.66, 0.76), so the real camera-to-target distance is `distance × FRAMING_LENGTH`.
+ */
+export function framing(layout: OfficeLayout, aspect: number): { distance: number; fit: number } {
+  const { minX, maxX, minZ, maxZ } = layout.focus;
+  const size = Math.max(maxX - minX, (maxZ - minZ) * 1.3);
+  const fit = Math.max(1, 1.5 / aspect);
+  const roundedFit = Math.round(fit * 4) / 4; // avoid re-framing on every pixel of a resize
+  return { distance: (size * 0.78 + 4) * roundedFit, fit: roundedFit };
+}
+export const FRAMING_DIR: [number, number, number] = [0.38, 0.66, 0.76];
+export const FRAMING_LENGTH = Math.hypot(...FRAMING_DIR); // ≈ 1.076
 
 /** The corridor in front of the cooler, where staff stop for a drink; null when the camera doesn't frame it. */
 function coolerSpot(layout: OfficeLayout): Vec2 | null {
@@ -128,11 +193,15 @@ function coolerSpot(layout: OfficeLayout): Vec2 | null {
   return spot[0] >= minX && spot[0] <= maxX && spot[1] <= maxZ ? spot : null;
 }
 
-/** Waypoints from the door to a seat: up the right corridor, along the row, down the desk aisle. */
+/**
+ * Waypoints from the street to a seat: in from the sidewalk (3 m out, off-camera in office view), through
+ * the door, up the right corridor, along the row, down the desk aisle. Leaving is the same list reversed.
+ */
 export function pathToSeat(layout: OfficeLayout, zone: Zone, seat: Vec2): Vec2[] {
   const corridorZ = zone.front + GAP / 2;
   const laneX = seat[0] + DESK_DX / 2;
-  return [layout.door, [layout.corridorX, corridorZ], [laneX, corridorZ], [laneX, seat[1]], seat];
+  const street: Vec2 = [layout.door[0], layout.bounds.maxZ + 3];
+  return [street, layout.door, [layout.corridorX, corridorZ], [laneX, corridorZ], [laneX, seat[1]], seat];
 }
 
 // Permanent employees between tasks stroll the open floor: the corridors in front of each zone and

@@ -18,7 +18,7 @@ import {
 } from "../../shared/types";
 import { useDraft } from "../drafts";
 import { chainFrom } from "../failures";
-import { api, useStore } from "../store";
+import { api, LIGHT_PINS, useStore, type LightPin } from "../store";
 import { DriveMarkdown } from "./DriveMarkdown";
 
 export function Modals({ snapshot }: { snapshot: Snapshot }) {
@@ -117,6 +117,8 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
   const { settings } = snapshot;
   const openModal = useStore((s) => s.openModal);
   const showToast = useStore((s) => s.showToast);
+  const lightPin = useStore((s) => s.lightPin);
+  const setLightPin = useStore((s) => s.setLightPin);
   const [companyName, setCompanyName] = useState(settings.companyName);
   const [aiOffice, setAiOffice] = useState(settings.aiOffice);
   const [apiKey, setApiKey] = useState("");
@@ -273,6 +275,23 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
           </button>
         </div>
       </form>
+      {/* Outside the form on purpose: it applies at once, in this browser only, and isn't part of Save. */}
+      <div className="form settings-local">
+        <fieldset>
+          <legend>This browser</legend>
+          <label>
+            Lighting
+            <select value={lightPin} onChange={(e) => setLightPin(e.target.value as LightPin)}>
+              {LIGHT_PINS.map((pin) => (
+                <option key={pin} value={pin}>
+                  {pin === "auto" ? "Follow my clock" : pin[0].toUpperCase() + pin.slice(1)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="hint tiny">Only changes how the office looks here.</p>
+        </fieldset>
+      </div>
     </Modal>
   );
 }
@@ -361,8 +380,7 @@ function DepartmentModal({
     }
   };
 
-  return (
-    <Modal title={department ? department.name : "Open a department"}>
+  const settingsForm = (
       <form className="form" onSubmit={save}>
         <div className="form__row">
           <label>
@@ -456,11 +474,18 @@ function DepartmentModal({
           </button>
         </div>
       </form>
+  );
 
-      {department && <TeamSection department={department} staff={staff} tasks={tasks} />}
+  // A new department has only the form, first and open.
+  if (!department) return <Modal title="Open a department">{settingsForm}</Modal>;
 
-      {department && (
-        <form className="form form--section" onSubmit={assign}>
+  // An existing one puts the work first; the settings form stays mounted inside the closed <details>,
+  // so useUnsaved still sees edits and Esc/✕ still ask.
+  return (
+    <Modal title={department.name}>
+      <TeamSection department={department} staff={staff} tasks={tasks} />
+
+      <form className="form form--section" onSubmit={assign}>
           <h3>Hand them a task directly</h3>
           {staff.length > 0 && <EmployeeSelect staff={staff} value={taskEmployee} onChange={setTaskEmployee} label="For" />}
           <input value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} placeholder="Task title" maxLength={120} required />
@@ -477,11 +502,63 @@ function DepartmentModal({
             </button>
           </div>
         </form>
-      )}
 
-      {department && <SchedulesSection department={department} staff={staff} schedules={schedules} />}
-      {department && <CommandsSection department={department} commands={commands} />}
+      <RecentWork tasks={tasks} staff={staff} />
+      <SchedulesSection department={department} staff={staff} schedules={schedules} />
+      <CommandsSection department={department} commands={commands} />
+
+      <details className="form--section dept-settings">
+        <summary>⚙️ Settings: name, instructions, access, model</summary>
+        {settingsForm}
+      </details>
     </Modal>
+  );
+}
+
+const STATUS_EMOJI: Record<Task["status"], string> = {
+  done: "✅",
+  failed: "⚠️",
+  working: "⏳",
+  queued: "🕓",
+  cancelled: "✖️",
+};
+
+/** The department's last 5 tasks, newest first; a row opens the task card (asking first about unsaved edits). */
+function RecentWork({ tasks, staff }: { tasks: Task[]; staff: Employee[] }) {
+  const openModal = useStore((s) => s.openModal);
+  const selectTask = useStore((s) => s.selectTask);
+  const at = (t: Task) => t.finishedAt ?? t.startedAt ?? t.createdAt;
+  const recent = [...tasks].sort((a, b) => at(b) - at(a)).slice(0, 5);
+  return (
+    <section className="form--section recent-work">
+      <h3>Recent work</h3>
+      {recent.length === 0 ? (
+        <p className="muted tiny">Nothing handed out yet.</p>
+      ) : (
+        <ul className="recent-work__list">
+          {recent.map((t) => {
+            const who = t.workerName ?? staff.find((e) => e.id === t.employeeId)?.name;
+            return (
+              <li key={t.id}>
+                <button
+                  type="button"
+                  className="recent-work__row"
+                  onClick={() => {
+                    if (unsaved.size && !confirm("Discard your changes?")) return;
+                    openModal(null);
+                    selectTask(t.id);
+                  }}
+                >
+                  <span aria-hidden>{STATUS_EMOJI[t.status]}</span>
+                  <span className="recent-work__title">{t.title}</span>
+                  {who && <small className="muted">{who}</small>}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 
