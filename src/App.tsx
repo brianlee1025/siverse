@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { Snapshot } from "../shared/types";
 import { isClaudeCode } from "../shared/types";
 import { OfficeScene } from "./scene/OfficeScene";
@@ -13,6 +13,9 @@ import { TopBar } from "./ui/TopBar";
 import { WelcomeBack } from "./ui/WelcomeBack";
 import { canWalk, WalkHud } from "./world/WalkHud";
 
+// ?plan: the 2D city-block map. Lazy, so the city code (world/cityBlock.ts, rng.ts) never lands in main.
+const PlanDebug = lazy(() => import("./world/PlanDebug"));
+
 export function App() {
   const raw = useStore((s) => s.snapshot);
   const snapshot = useMemo(() => raw && visibleSnapshot(raw), [raw]);
@@ -22,6 +25,7 @@ export function App() {
   const modal = useStore((s) => s.modal);
   const selectedTaskId = useStore((s) => s.selectedTaskId);
   const selectTask = useStore((s) => s.selectTask);
+  const showPlan = useStore((s) => s.showPlan);
   const [sceneKey, setSceneKey] = useState(0); // bumping it rebuilds the 3D office after a crash
 
   // First visit with the office unable to run (no API key, or no Claude Code CLI): open Settings
@@ -42,7 +46,10 @@ export function App() {
 
   // Links into the office: ?open=drive | department:<id> | file:<path>, and ?task=<id> or #task=<id>.
   // Also ?phase=morning|day|evening|night (lighting, this visit only), ?view=outside (start zoomed out),
-  // ?view=walk (start in walk mode) and ?colliders (draw the walk-mode colliders).
+  // ?view=walk (start in walk mode), ?colliders (draw the walk-mode colliders) and ?fps (frame rate and
+  // draw calls, bottom-right of the scene), ?plan (a 2D map of the generated city block, top-right) and
+  // ?seed=<number> (the city's seed for this visit; default: hashed from the company name inside PlanDebug,
+  // so the city code stays out of the main bundle).
   // Read once, on the first snapshot, then wiped from the address bar so a reload doesn't reopen them.
   const checkedLink = useRef(false);
   useEffect(() => {
@@ -55,8 +62,14 @@ export function App() {
     const phase = params.get("phase");
     const view = params.get("view");
     const colliders = params.has("colliders");
-    if (!open && !taskId && !phase && !view && !colliders) return;
+    const fps = params.has("fps");
+    const plan = params.has("plan");
+    const seed = params.get("seed");
+    if (!open && !taskId && !phase && !view && !colliders && !fps && !plan && !seed) return;
     if (colliders) useStore.setState({ showColliders: true });
+    if (fps) useStore.setState({ showFps: true });
+    if (plan) useStore.setState({ showPlan: true });
+    if (seed && /^\d{1,10}$/.test(seed)) useStore.setState({ citySeed: Number(seed) >>> 0 });
     // Not saved: a link pins the lighting for this visit only (Settings saves it).
     if (phase && phase !== "auto" && (LIGHT_PINS as readonly string[]).includes(phase)) useStore.setState({ lightPin: phase as LightPin });
     if (view === "outside") useStore.setState({ startOutside: true });
@@ -96,6 +109,11 @@ export function App() {
           </ErrorBoundary>
           <WelcomeBack />
           <WalkHud />
+          {showPlan && (
+            <Suspense fallback={null}>
+              <PlanDebug departments={snapshot.departments} companyName={snapshot.settings.companyName} />
+            </Suspense>
+          )}
           <ErrorBoundary name="task card" resetKey={selectedTaskId} onClose={() => selectTask(null)}>
             {/* Off: the board hides office tasks, but a running worker can still ask for an OK, and the
                 approval route doesn't need the office on. */}

@@ -86,6 +86,8 @@ export function WelcomeBack() {
     writeSeen();
     const snapshot = useStore.getState().snapshot;
     if (since === null || !snapshot || Date.now() - since < AWAY_MS) return;
+    // The chat marks what came in since (ChatPanel), even when no task line made the card.
+    useStore.setState({ awaySince: since });
     const lines = linesSince(snapshot, since);
     if (lines.length) setCard({ since, lines });
   };

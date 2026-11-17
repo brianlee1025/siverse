@@ -1,8 +1,12 @@
 import { memo, useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
-import { CanvasTexture, RepeatWrapping, SRGBColorSpace, type Group } from "three";
-import { DOOR_HALF, FRAMING_LENGTH, framing, SIDEWALK, STREET_Y, WALL_H, type OfficeLayout } from "../layout";
+import { CanvasTexture, MeshStandardMaterial, RepeatWrapping, SRGBColorSpace, type Group } from "three";
+import { Html } from "@react-three/drei";
+import { BUBBLE_Z, DOOR_HALF, FRAMING_LENGTH, framing, SIDEWALK, STREET_Y, WALL_H, type OfficeLayout } from "../layout";
+import { useStore } from "../store";
+import type { Phase } from "../scene/OfficeScene";
+import { Facade } from "./Facade";
 
 // Roadmap phase 1 (steps 1a + 1b): the office as a building. Office view stays the open dollhouse; the
 // shell, roof, sign, entrance and sidewalk only show once the boss zooms out past 1.5× the framing
@@ -78,13 +82,14 @@ function groundFade(): CanvasTexture {
   return fadeTexture;
 }
 
-/** The company name in white on dark, sized to fit. System font only. */
-function signTexture(name: string): CanvasTexture {
+/** The company name in white on dark, sized to fit. System font only. `glow` draws the emissive map:
+ * black background, white text, so only the letters light up after dark. */
+function signTexture(name: string, glow = false): CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = 512;
   canvas.height = 96;
   const g = canvas.getContext("2d")!;
-  g.fillStyle = CANVAS_DARK;
+  g.fillStyle = glow ? "#000000" : CANVAS_DARK;
   g.fillRect(0, 0, 512, 96);
   g.fillStyle = "#ffffff";
   g.textAlign = "center";
@@ -100,7 +105,7 @@ function signTexture(name: string): CanvasTexture {
   return tex;
 }
 
-function Sidewalk({ x0, x1, z0, z1 }: { x0: number; x1: number; z0: number; z1: number }) {
+function Sidewalk({ x0, x1, z0, z1, tint }: { x0: number; x1: number; z0: number; z1: number; tint: string }) {
   const w = x1 - x0;
   const d = z1 - z0;
   const map = useMemo(() => {
@@ -119,13 +124,39 @@ function Sidewalk({ x0, x1, z0, z1 }: { x0: number; x1: number; z0: number; z1: 
       </mesh>
       <mesh position={[0, 0.012, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[w, d]} />
-        <meshStandardMaterial map={map} roughness={0.95} />
+        <meshStandardMaterial map={map} color={tint} roughness={0.95} />
       </mesh>
     </group>
   );
 }
 
-export const Exterior = memo(function Exterior({ layout, name, walking }: { layout: OfficeLayout; name: string; walking: boolean }) {
+/** Step 1c-ii: the entrance lamp and the sign light up after dark (emissive only, no light objects). */
+const LAMP: Record<Phase, number> = { morning: 0.3, day: 0.3, evening: 1.2, night: 2.0 };
+// Round 10: only the letters glow now (signGlow below), so they can be brighter.
+const SIGN_GLOW: Record<Phase, number> = { morning: 0, day: 0, evening: 0.5, night: 0.9 };
+/** Round 10 (M8): the street and the sidewalk tops darken after dark. The sidewalk tint multiplies its joint map. */
+const STREET: Record<Phase, string> = { morning: "#8e8a84", day: "#8e8a84", evening: "#6e6b6a", night: "#4a4a52" };
+const SIDEWALK_TINT: Record<Phase, string> = { morning: "#ffffff", day: "#ffffff", evening: "#d8d4d0", night: "#9a98a6" };
+
+export const Exterior = memo(function Exterior({
+  layout,
+  name,
+  walking,
+  phase,
+  innerGlass,
+  busy,
+  asking,
+  askId,
+}: {
+  layout: OfficeLayout;
+  name: string;
+  walking: boolean;
+  phase: Phase;
+  innerGlass: string; // Room's pane colour for the phase, for the inner front/right windows (Facade)
+  busy: string; // zones with someone working, comma-joined ("boss" for the manager): lit windows at night
+  asking: number; // approvals waiting: a ✋ pin over the roof in the outside view (round 11, roadmap 1c-vi)
+  askId: string | undefined; // the first one, opened by the pin
+}) {
   const group = useRef<Group>(null);
   const outside = useRef(false);
   const controls = useThree((s) => s.controls) as unknown as OrbitControlsImpl | null; // makeDefault sets it
@@ -210,24 +241,59 @@ export const Exterior = memo(function Exterior({ layout, name, walking }: { layo
     return out;
   }, [minX, maxX, minZ, maxZ, width, depth, cx, cz, door]);
 
+  // One material per colour for all the boxes (about 45 → 6). Draw calls stay the same.
+  const mats = useMemo(() => new Map<string, MeshStandardMaterial>(), []);
+  const mat = (color: string) => {
+    let m = mats.get(color);
+    if (!m) mats.set(color, (m = new MeshStandardMaterial({ color })));
+    return m;
+  };
+  // Dispose frees GPU memory only; a material still in use is re-uploaded (safe under StrictMode's re-run).
+  useEffect(() => () => mats.forEach((m) => m.dispose()), [mats]);
+
   const sign = useMemo(() => signTexture(name.trim() || "Office"), [name]);
   useEffect(() => () => sign.dispose(), [sign]);
+  const signGlow = useMemo(() => signTexture(name.trim() || "Office", true), [name]);
+  useEffect(() => () => signGlow.dispose(), [signGlow]);
   // The sign and canopy stay on the front wall even when the door is near the corner.
   const signX = Math.min(door, maxX + 0.22 - 1.5);
   const canopyX = Math.min(door, maxX + 0.22 - 1.2);
 
   return (
+    <>
+    {asking > 0 && (
+      // Outside view only: CSS shows it under .scene--outside (drei <Html> ignores the group's `visible`).
+      // No distanceFactor: it keeps one size at 45–86 m.
+      <Html position={[cx, WALL_H + 2.6, cz]} center zIndexRange={BUBBLE_Z}>
+        <button className="roof-ask" onClick={() => askId && useStore.getState().selectTask(askId)}>
+          ✋ {asking} need{asking === 1 ? "s" : ""} your OK
+        </button>
+      </Html>
+    )}
     <group ref={group} visible={false}>
       {boxes.map((b, i) => (
-        <mesh key={i} position={b.position} castShadow={b.shadow} receiveShadow>
+        <mesh key={i} position={b.position} castShadow={b.shadow} receiveShadow material={mat(b.color)}>
           <boxGeometry args={b.size} />
-          <meshStandardMaterial color={b.color} />
         </mesh>
       ))}
-      {/* The company name over the door, above the canopy. */}
+      {/* Step 1c-iii: a ceiling for walk mode, under the roof slab (y 3.0–3.2). Facing down, it's lit by the
+          hemisphere's ground colour (tan by day, mauve at night), hence the emissive lift. No shadows: it would
+          darken the whole floor. */}
+      <mesh position={[cx, WALL_H - 0.01, cz]} rotation={[Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[width, depth]} />
+        <meshStandardMaterial color="#f7f2ea" emissive="#f7f2ea" emissiveIntensity={0.3} />
+      </mesh>
+      <Facade layout={layout} phase={phase} innerGlass={innerGlass} busy={busy} />
+      {/* The company name over the door, above the canopy; its letters glow after dark. */}
       <mesh position={[signX, 2.8, maxZ + 0.225]}>
         <planeGeometry args={[3, 0.45]} />
-        <meshStandardMaterial map={sign} roughness={0.6} />
+        <meshStandardMaterial
+          map={sign}
+          emissiveMap={signGlow}
+          emissive="#ffffff"
+          emissiveIntensity={SIGN_GLOW[phase]}
+          roughness={0.6}
+        />
       </mesh>
       {/* Entrance: canopy, a lamp under it (emissive only, no light object), and a doorstep. */}
       <mesh position={[canopyX, 2.5, maxZ + 0.9]} castShadow receiveShadow>
@@ -236,21 +302,22 @@ export const Exterior = memo(function Exterior({ layout, name, walking }: { layo
       </mesh>
       <mesh position={[door, 2.42, maxZ + 0.7]}>
         <boxGeometry args={[0.3, 0.06, 0.3]} />
-        <meshStandardMaterial color="#fff3df" emissive="#ffd9a0" emissiveIntensity={1.2} />
+        <meshStandardMaterial color="#fff3df" emissive="#ffd9a0" emissiveIntensity={LAMP[phase]} />
       </mesh>
       <mesh position={[door, 0.03, maxZ + 0.5]} receiveShadow>
         <boxGeometry args={[2.0, 0.06, 0.6]} />
         <meshStandardMaterial color={STONE} />
       </mesh>
       {/* Sidewalk: an apron in front, and strips down both sides. */}
-      <Sidewalk x0={minX - SIDEWALK} x1={maxX + SIDEWALK} z0={maxZ + 0.2} z1={maxZ + 0.2 + SIDEWALK} />
-      <Sidewalk x0={minX - SIDEWALK} x1={minX - 0.2} z0={minZ - 0.2} z1={maxZ + 0.2} />
-      <Sidewalk x0={maxX + 0.2} x1={maxX + SIDEWALK} z0={minZ - 0.2} z1={maxZ + 0.2} />
+      <Sidewalk x0={minX - SIDEWALK} x1={maxX + SIDEWALK} z0={maxZ + 0.2} z1={maxZ + 0.2 + SIDEWALK} tint={SIDEWALK_TINT[phase]} />
+      <Sidewalk x0={minX - SIDEWALK} x1={minX - 0.2} z0={minZ - 0.2} z1={maxZ + 0.2} tint={SIDEWALK_TINT[phase]} />
+      <Sidewalk x0={maxX + 0.2} x1={maxX + SIDEWALK} z0={minZ - 0.2} z1={maxZ + 0.2} tint={SIDEWALK_TINT[phase]} />
       {/* The street: one plane that fades out at the edge into the backdrop. */}
       <mesh position={[cx, STREET_Y, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[90, 90]} />
-        <meshStandardMaterial color="#8e8a84" alphaMap={groundFade()} transparent depthWrite={false} />
+        <meshStandardMaterial color={STREET[phase]} alphaMap={groundFade()} transparent depthWrite={false} />
       </mesh>
     </group>
+    </>
   );
 });

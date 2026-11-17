@@ -50,6 +50,7 @@ import { Exterior } from "../world/Exterior";
 // The open-world pieces load on first use, in their own chunks (roadmap: lazy city).
 const ColliderDebug = lazy(() => import("../world/ColliderDebug"));
 const WalkControls = lazy(() => import("../world/WalkControls"));
+const FpsDebug = lazy(() => import("../world/FpsDebug"));
 
 const LEAVING_WINDOW_MS = 18_000; // finished workers stay on screen this long to walk out (to the sidewalk)
 const CAMERA_FOV = 35;
@@ -57,7 +58,7 @@ const LABEL_DISTANCE_FACTOR = 14; // the distanceFactor of the people's bubbles
 
 // ---- Time of day: one warm "sun" plus a sky fill, tinted by the boss's local clock ----
 
-type Phase = "morning" | "day" | "evening" | "night";
+export type Phase = "morning" | "day" | "evening" | "night";
 interface PhaseLook {
   sun: string;
   sunIntensity: number;
@@ -139,9 +140,20 @@ export function OfficeScene({ snapshot }: { snapshot: Snapshot }) {
   const floorPlanKey = snapshot.departments.map((d) => `${d.id}:${d.headcount}`).join("|");
   const layout = useMemo(() => buildLayout(snapshot.departments), [floorPlanKey]);
   const [contextLost, setContextLost] = useState(false);
-  const look = PHASES[useDayPhase()];
+  const phase = useDayPhase();
+  const look = PHASES[phase];
   const showColliders = useStore((s) => s.showColliders);
+  const showFps = useStore((s) => s.showFps);
   const walking = useStore((s) => s.viewMode === "walk");
+  // Which zones have someone working, as a sorted string (unchanged snapshots give the same value, so
+  // Exterior's memo holds). The façade lights those teams' windows at night.
+  const busy = [...new Set(snapshot.tasks.filter((t) => t.status === "working").map((t) => t.departmentId))]
+    .sort()
+    .concat(snapshot.manager.busy ? ["boss"] : [])
+    .join(",");
+  // Approvals waiting: the manager's ✋ in the room and (round 11) the pin over the roof outside. Primitives, so memo holds.
+  const asking = snapshot.tasks.filter((t) => t.approval).length;
+  const askId = snapshot.tasks.find((t) => t.approval)?.id;
   // The "＋ New department" label only shows when its row is framed by the camera (or the office is empty).
   const showPlaceholderLabel = useMemo(() => {
     const row = layout.placeholder?.center[1];
@@ -192,15 +204,15 @@ export function OfficeScene({ snapshot }: { snapshot: Snapshot }) {
         <CameraRig layout={layout} />
       )}
       <Room layout={layout} look={look} />
-      <Exterior layout={layout} name={snapshot.settings.companyName} walking={walking} />
+      <Exterior layout={layout} name={snapshot.settings.companyName} walking={walking} phase={phase} innerGlass={look.glass} busy={busy} asking={asking} askId={askId} />
       <BossOffice
         zone={layout.boss}
         walking={walking}
         showManager={snapshot.settings.aiOffice}
         busy={snapshot.manager.busy}
         activity={snapshot.manager.activity}
-        asking={snapshot.tasks.filter((t) => t.approval).length}
-        firstAskingId={snapshot.tasks.find((t) => t.approval)?.id}
+        asking={asking}
+        firstAskingId={askId}
       />
       {snapshot.departments.map((department) => (
         <DepartmentZone key={department.id} department={department} layout={layout} tasks={snapshot.tasks} />
@@ -222,6 +234,11 @@ export function OfficeScene({ snapshot }: { snapshot: Snapshot }) {
       {showColliders && (
         <Suspense fallback={null}>
           <ColliderDebug layout={layout} />
+        </Suspense>
+      )}
+      {showFps && (
+        <Suspense fallback={null}>
+          <FpsDebug />
         </Suspense>
       )}
     </Canvas>

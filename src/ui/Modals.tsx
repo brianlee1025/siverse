@@ -119,6 +119,7 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
   const showToast = useStore((s) => s.showToast);
   const lightPin = useStore((s) => s.lightPin);
   const setLightPin = useStore((s) => s.setLightPin);
+  const showFps = useStore((s) => s.showFps);
   const [companyName, setCompanyName] = useState(settings.companyName);
   const [aiOffice, setAiOffice] = useState(settings.aiOffice);
   const [apiKey, setApiKey] = useState("");
@@ -288,6 +289,11 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
                 </option>
               ))}
             </select>
+          </label>
+          {/* Not saved (a debug view): a reload turns it off, as ?fps does. */}
+          <label className="checkbox">
+            <input type="checkbox" checked={showFps} onChange={(e) => useStore.setState({ showFps: e.target.checked })} />
+            Show frame rate and draw calls
           </label>
           <p className="hint tiny">Only changes how the office looks here.</p>
         </fieldset>
@@ -503,7 +509,7 @@ function DepartmentModal({
           </div>
         </form>
 
-      <RecentWork tasks={tasks} staff={staff} />
+      <RecentWork tasks={tasks} staff={staff} departmentId={department.id} />
       <SchedulesSection department={department} staff={staff} schedules={schedules} />
       <CommandsSection department={department} commands={commands} />
 
@@ -524,7 +530,7 @@ const STATUS_EMOJI: Record<Task["status"], string> = {
 };
 
 /** The department's last 5 tasks, newest first; a row opens the task card (asking first about unsaved edits). */
-function RecentWork({ tasks, staff }: { tasks: Task[]; staff: Employee[] }) {
+function RecentWork({ tasks, staff, departmentId }: { tasks: Task[]; staff: Employee[]; departmentId: string }) {
   const openModal = useStore((s) => s.openModal);
   const selectTask = useStore((s) => s.selectTask);
   const at = (t: Task) => t.finishedAt ?? t.startedAt ?? t.createdAt;
@@ -545,6 +551,8 @@ function RecentWork({ tasks, staff }: { tasks: Task[]; staff: Employee[] }) {
                   className="recent-work__row"
                   onClick={() => {
                     if (unsaved.size && !confirm("Discard your changes?")) return;
+                    // The card offers "← Back to <department>" for this task only (TaskDetail).
+                    useStore.setState({ taskFrom: { taskId: t.id, departmentId } });
                     openModal(null);
                     selectTask(t.id);
                   }}

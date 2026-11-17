@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import Markdown from "react-markdown";
 import type { ChatMessage, Snapshot } from "../../shared/types";
 import { api, useStore } from "../store";
@@ -68,6 +68,8 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const atBottom = useRef(true);
   const [newBelow, setNewBelow] = useState(false);
+  const divider = useRef<HTMLDivElement>(null);
+  const scrolledFor = useRef<number | null>(null); // the absence we already scrolled for
 
   const scrollDown = () => {
     // Instant, not smooth: a smooth scroll fires scroll events part-way, which would read as "scrolled up".
@@ -108,12 +110,34 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
 
   const items = groupChat(snapshot.chat, hideEvents);
 
+  // "New since you were away": above the first item that arrived after the boss left (an event group counts
+  // by its newest message). If that's the boss's own message, nothing arrived while away: no line.
+  const awaySince = useStore((s) => s.awaySince);
+  const newestOf = (item: ChatItem) => (item.kind === "message" ? item.message : item.messages[item.messages.length - 1]);
+  const firstNew = awaySince === null ? -1 : items.findIndex((item) => newestOf(item).at > awaySince);
+  const dividerAt = firstNew >= 0 && newestOf(items[firstNew]).role !== "boss" ? firstNew : -1;
+
+  // Coming back: show the first new message at the top, once per absence. The "↓ New messages" pill then
+  // takes the boss to the bottom. Not scrollIntoView: that would scroll the page and other panels too.
+  // Runs after the follow effect above, so on the first render it scrolls down first, then up to the line.
+  useEffect(() => {
+    const el = list.current;
+    const mark = divider.current;
+    if (awaySince === null || dividerAt < 0 || scrolledFor.current === awaySince || !el || !mark) return;
+    if (el.clientHeight === 0) return; // the chat is collapsed: try again when it renders (tab is a dep)
+    scrolledFor.current = awaySince;
+    el.scrollTop += mark.getBoundingClientRect().top - el.getBoundingClientRect().top - 8;
+    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK_PX;
+    if (!atBottom.current) setNewBelow(true);
+  }, [awaySince, dividerAt, tab]);
+
   const send = async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || busy || sending) return;
     setSending(true);
     try {
       await api("POST", "/api/chat", { text: trimmed });
+      useStore.setState({ awaySince: null }); // the boss has answered: the marker has done its job
       clearDraft();
     } finally {
       setSending(false);
@@ -157,18 +181,24 @@ export function ChatPanel({ snapshot }: { snapshot: Snapshot }) {
             </div>
           </div>
         )}
-        {items.map((item) =>
-          item.kind === "message" ? (
-            <Message key={item.message.id} message={item.message} />
-          ) : (
-            <EventGroup
-              key={item.messages[0].id}
-              messages={item.messages}
-              open={expanded.has(item.messages[0].id)}
-              onToggle={() => toggleGroup(item.messages[0].id)}
-            />
-          ),
-        )}
+        {items.map((item, i) => (
+          <Fragment key={item.kind === "message" ? item.message.id : item.messages[0].id}>
+            {i === dividerAt && (
+              <div className="chat__divider" role="separator" ref={divider}>
+                <span>New since you were away</span>
+              </div>
+            )}
+            {item.kind === "message" ? (
+              <Message message={item.message} />
+            ) : (
+              <EventGroup
+                messages={item.messages}
+                open={expanded.has(item.messages[0].id)}
+                onToggle={() => toggleGroup(item.messages[0].id)}
+              />
+            )}
+          </Fragment>
+        ))}
         {busy && (
           <div className="chat__activity">
             <span className="dots" aria-hidden>

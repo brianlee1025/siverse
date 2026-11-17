@@ -45,7 +45,8 @@ export interface OfficeLayout {
   dividers: Divider[]; // low planters (glass beside the boss) in the back half of the gaps between zones
   kitchenX: number | undefined; // the coffee corner's x on the back wall (behind the back row's last gap)
   wallSlots: { x: number; kind: "window" | "art" }[]; // back-wall windows and art, clear of the coffee corner
-  sideWindows: number[]; // z of the left wall's windows
+  sideWindows: number[]; // z of the left wall's windows (the outside right wall reuses them)
+  frontWindows: number[]; // x of the front wall's windows: outside only (world/Facade.tsx)
 }
 
 /** Half the door opening: the DoorFrame posts are at ±0.75 and 0.14 wide. */
@@ -152,6 +153,11 @@ export function buildLayout(departments: Department[]): OfficeLayout {
   const sideWindows = Array.from({ length: Math.max(1, Math.floor(roomDepth / 6)) }, (_, i) => bounds.minZ + 3 + i * 6).filter(
     (z) => z < bounds.maxZ - 2,
   );
+  // Outside only (Exterior/Facade): every 5 m like the back wall's windows, but clear of the canopy and sign
+  // over the door. Canopy half 1.2 + window half 1.36 + 0.14 slack = 2.7.
+  const canopyX = Math.min(corridorX, bounds.maxX + 0.22 - 1.2); // the same rule as Exterior's canopyX
+  const frontWindows: number[] = [];
+  for (let x = bounds.minX + 2.5; x <= bounds.maxX - 2; x += 5) if (Math.abs(x - canopyX) >= 2.7) frontWindows.push(x);
   return {
     boss,
     departments: map,
@@ -165,6 +171,7 @@ export function buildLayout(departments: Department[]): OfficeLayout {
     kitchenX,
     wallSlots,
     sideWindows,
+    frontWindows,
   };
 }
 

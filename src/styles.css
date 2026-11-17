@@ -837,6 +837,21 @@ code {
 .chat .panel-header__actions .btn {
   white-space: nowrap;
 }
+/* "New since you were away" (round 10): a rule with the words in the middle. --ink-2, not --warn (contrast). */
+.chat__divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.chat__divider::before,
+.chat__divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--line);
+}
 /* Sticks to the bottom of the scrolling list while the boss reads older messages. */
 .chat__new-pill {
   position: sticky;
@@ -1099,6 +1114,22 @@ code {
 .scene--street .zone-placeholder {
   visibility: hidden;
 }
+/* Outside view (world/Exterior.tsx): one ✋ pin over the roof while an approval waits. Hidden otherwise:
+   drei <Html> ignores the hidden group's `visible`, so CSS is the gate. Walk mode never sets .scene--outside. */
+.roof-ask {
+  visibility: hidden;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--warn) 18%, white);
+  border: 1px solid var(--warn);
+  color: var(--ink);
+}
+.scene--outside .roof-ask {
+  visibility: visible;
+}
 
 /* ---------- Walk mode HUD (world/WalkHud.tsx) ---------- */
 .walk-btn {
@@ -1113,6 +1144,8 @@ code {
   z-index: 20; /* above the canvas, under the welcome card (30) and the task card (40) */
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: 8px;
   border: 0;
   background: rgba(35, 38, 45, 0.28);
   color: #fff;
@@ -1125,6 +1158,12 @@ code {
   padding: 10px 18px;
   border-radius: 999px;
   background: rgba(35, 38, 45, 0.75);
+}
+.walk-lock small {
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.85;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 .walk-hint {
   position: absolute;
@@ -1140,13 +1179,103 @@ code {
   white-space: nowrap;
   pointer-events: none;
 }
+.walk-hint--fade {
+  animation: walk-fade 0.4s ease 6s forwards;
+}
+@keyframes walk-fade {
+  to {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Same 6 s wait, then gone at once (no fade). */
+  .walk-hint--fade {
+    animation: walk-fade 0s step-end 6s forwards;
+  }
+}
+/* "E Open Marketing" just under the centre dot (R6). */
+.walk-use {
+  position: absolute;
+  z-index: 21;
+  left: 50%;
+  top: calc(50% + 28px);
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(35, 38, 45, 0.75);
+  color: #fff;
+  font-size: 13px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.walk-use kbd,
+.walk-btn__key {
+  display: inline-block;
+  min-width: 1.5em;
+  margin-right: 4px;
+  padding: 0 4px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 4px;
+  font: 600 12px ui-monospace, monospace;
+  text-align: center;
+}
+/* On the light 🚶 button: a dark-ink key cap. The button's flex gap (6px) already spaces it from "Walk". */
+.walk-btn__key {
+  margin-right: 0;
+  border-color: var(--line);
+  color: var(--ink-2);
+}
+/* ?fps (world/FpsDebug.tsx) */
+.fps-debug {
+  position: absolute;
+  z-index: 22;
+  right: 12px;
+  bottom: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(35, 38, 45, 0.75);
+  color: #fff;
+  font: 12px ui-monospace, monospace;
+  pointer-events: none;
+}
+/* ?plan (world/PlanDebug.tsx): the 2D block map, top-right. Doesn't block orbit drags. */
+.plan-debug {
+  position: absolute;
+  z-index: 22;
+  right: 12px;
+  top: 12px;
+  max-width: calc(100% - 24px);
+  padding: 6px;
+  border-radius: 8px;
+  background: rgba(35, 38, 45, 0.85);
+  color: #fff;
+  font: 11px ui-monospace, monospace;
+  pointer-events: none;
+}
+.plan-debug canvas {
+  display: block;
+  width: 300px;
+  height: auto;
+  max-width: 100%;
+}
+.plan-debug__line {
+  margin-top: 3px;
+  white-space: pre-wrap;
+}
+.plan-debug__problem {
+  color: #ff8787;
+}
+.plan-debug__skipped {
+  color: #adb5bd;
+}
+/* Top-right: clear of the welcome card (top-left), the task card (bottom-left) and the toasts (bottom-centre). */
 .walk-note,
 .walk-ask {
   position: absolute;
   z-index: 21;
-  left: 50%;
+  right: 12px;
   top: 12px;
-  transform: translateX(-50%);
+  max-width: calc(100% - 24px);
   padding: 6px 12px;
   border-radius: 999px;
   font-size: 13px;
@@ -1258,6 +1387,23 @@ code {
 .task-detail__header small {
   font-weight: 650;
   font-size: 12px;
+}
+/* "← Back to <department>" on a task opened from Recent work (TaskDetail). */
+.task-detail__back {
+  display: block;
+  margin: 0 0 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.task-detail__back:hover,
+.task-detail__back:focus-visible {
+  color: var(--ink);
+  text-decoration: underline;
 }
 .task-detail__header h3 {
   margin: 2px 0 0;

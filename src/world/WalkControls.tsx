@@ -2,8 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { PerspectiveCamera } from "@react-three/drei";
 import type { PerspectiveCamera as PerspectiveCameraImpl } from "three";
-import type { OfficeLayout } from "../layout";
-import { useStore } from "../store";
+import { ZONE_D, ZONE_W, type OfficeLayout } from "../layout";
+import { useStore, type WalkTarget } from "../store";
 import { buildColliders, moveWithCollisions } from "./colliders";
 import { isTyping } from "./WalkHud";
 
@@ -20,9 +20,20 @@ const LOOK = 0.0022; // rad per mouse pixel
 const PITCH_MAX = 1.4;
 const STEP = 0.1; // sub-step length, so a fast frame can't jump through a thin box
 
+// Step 2b-i, "E to use": the boss's chair sits at (cx − 0.6, cz − 0.6) behind the desk; coming round the
+// desk's end gets you to 1.45 m, so 1.6. A zone counts with half the corridor in front (0.9) and 0.4 at
+// the sides; zones never overlap (1.8 m gaps), so you stand in at most one.
+const DESK_REACH = 1.6;
+const ZONE_FRONT_MARGIN = 0.9;
+const ZONE_SIDE_MARGIN = 0.4;
+
 const MOVE_KEYS = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "ShiftLeft", "ShiftRight"]);
 
 const askCount = (s: ReturnType<typeof useStore.getState>) => s.snapshot?.tasks.filter((t) => t.approval).length ?? 0;
+
+/** Step 2b-ii-a: where the boss last stood, kept in memory only (a reload starts at the desk). Tied to the
+ * layout object: OfficeScene keeps it until the floor plan changes, so a hire falls back to the spawn. */
+let lastWalk: { layout: OfficeLayout; x: number; z: number; yaw: number; pitch: number } | null = null;
 
 export default function WalkControls({ layout }: { layout: OfficeLayout }) {
   const cam = useRef<PerspectiveCameraImpl>(null);
@@ -32,6 +43,8 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
   const held = useRef(new Set<string>());
   const look = useRef({ yaw: 0, pitch: 0 });
   const onStreet = useRef(false);
+  const dragging = useRef(false);
+  const targetKey = useRef("");
 
   // Spawn beside the boss's desk at eye height, facing the middle of the departments.
   const spawn = useMemo(() => {
@@ -43,6 +56,8 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
     const tz = (minZ + maxZ) / 2;
     return { x, z, yaw: Math.atan2(-(tx - x), -(tz - z)) };
   }, [layout]);
+  const spawnRef = useRef(spawn); // for R, whose key effect only depends on [gl]
+  spawnRef.current = spawn;
   const spawned = useRef(false);
   useLayoutEffect(() => {
     const c = cam.current;
@@ -50,10 +65,23 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
     spawned.current = true;
     c.userData.walk = true; // CameraRig waits until this camera is gone (OfficeScene.tsx)
     c.rotation.order = "YXZ";
-    c.position.set(spawn.x, EYE, spawn.z);
-    look.current = { yaw: spawn.yaw, pitch: 0 };
-    c.rotation.set(0, spawn.yaw, 0);
-  }, [spawn]);
+    // Back where the boss left off, unless the floor plan changed since. A box you start inside doesn't
+    // hold you (colliders.ts), and the first frame's inside check sets scene--street on the sidewalk.
+    const from = lastWalk?.layout === layout ? lastWalk : null;
+    const pose = from ?? { ...spawn, pitch: 0 };
+    c.position.set(pose.x, EYE, pose.z);
+    look.current = { yaw: pose.yaw, pitch: pose.pitch };
+    c.rotation.set(pose.pitch, pose.yaw, 0);
+  }, [spawn, layout]);
+
+  // Save the pose on leaving (or when a hire swaps the layout). The camera is captured now: the ref can be
+  // detached by the time an unmount's cleanup runs.
+  useEffect(() => {
+    const c = cam.current;
+    return () => {
+      if (c) lastWalk = { layout, x: c.position.x, z: c.position.z, yaw: look.current.yaw, pitch: look.current.pitch };
+    };
+  }, [layout]);
 
   // No R3F pointer events while walking: a click to lock the pointer must not open a rug's department
   // window or close the task card. Labels shrink: at FOV 70 a bubble 4 m away is ≈ 2.5× its office size.
@@ -64,6 +92,7 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
     return () => {
       setEvents({ enabled: true });
       canvas?.classList.remove("scene--street");
+      useStore.setState({ walkTarget: null });
       // --label-boost is rewritten by CameraRig on its first frame (its boost ref starts at 0).
     };
   }, [setEvents, gl]);
@@ -76,6 +105,27 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
     const unlock = () => locked() && document.exitPointerLock();
 
     const onDown = (e: KeyboardEvent) => {
+      if (e.code === "KeyE") {
+        const s = useStore.getState();
+        if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target) || s.modal || s.selectedTaskId) return;
+        const t = s.walkTarget;
+        if (t?.kind === "department") s.openModal({ type: "department", departmentId: t.id }); // the lock is released below
+        else if (t?.kind === "desk") {
+          document.exitPointerLock?.();
+          s.setViewMode("office"); // CameraRig restores the orbit pose the boss left (lastOrbit)
+        }
+        return;
+      }
+      // Step 2b-ii-a: R takes you back beside your desk. Same guards as E, so Ctrl+R still reloads.
+      if (e.code === "KeyR") {
+        const s = useStore.getState();
+        if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target) || s.modal || s.selectedTaskId) return;
+        const c = cam.current;
+        const home = spawnRef.current;
+        if (c) c.position.set(home.x, EYE, home.z);
+        look.current = { yaw: home.yaw, pitch: 0 };
+        return;
+      }
       if (!MOVE_KEYS.has(e.code) || e.ctrlKey || e.metaKey || isTyping(e.target) || useStore.getState().modal) return;
       keys.add(e.code);
       if (e.code.startsWith("Arrow")) e.preventDefault(); // no page scroll
@@ -83,8 +133,14 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
     const onUp = (e: KeyboardEvent) => keys.delete(e.code);
     const clear = () => keys.clear();
     const onVisibility = () => document.hidden && clear();
+    // Drag to look where pointer lock is refused (the HUD then shows no lock layer, so drags reach the
+    // canvas). R3F events are off, so a drag can't hit a rug.
+    const onPress = (e: MouseEvent) => {
+      if (e.button === 0 && !locked()) dragging.current = true;
+    };
+    const onRelease = () => (dragging.current = false);
     const onMouse = (e: MouseEvent) => {
-      if (!locked()) return;
+      if (!locked() && !dragging.current) return;
       const l = look.current;
       l.yaw -= e.movementX * LOOK;
       l.pitch = Math.max(-PITCH_MAX, Math.min(PITCH_MAX, l.pitch - e.movementY * LOOK));
@@ -109,8 +165,15 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
     window.addEventListener("blur", clear);
     document.addEventListener("visibilitychange", onVisibility);
     document.addEventListener("mousemove", onMouse);
+    canvas.addEventListener("mousedown", onPress);
+    window.addEventListener("mouseup", onRelease);
+    window.addEventListener("blur", onRelease);
     return () => {
       unsubscribe();
+      canvas.removeEventListener("mousedown", onPress);
+      window.removeEventListener("mouseup", onRelease);
+      window.removeEventListener("blur", onRelease);
+      onRelease();
       window.removeEventListener("keydown", onDown);
       window.removeEventListener("keyup", onUp);
       window.removeEventListener("blur", clear);
@@ -119,13 +182,6 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
       clear();
       unlock();
     };
-  }, [gl]);
-
-  // Dev only: draw calls once, 2 s in (the round-8 change log asks for office vs walk).
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    const t = setTimeout(() => console.info(`[walk] draw calls: ${gl.info.render.calls}`), 2000);
-    return () => clearTimeout(t);
   }, [gl]);
 
   useFrame((_, rawDelta) => {
@@ -155,10 +211,28 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
       c.position.set(x, EYE, z);
     }
 
+    const { x, z } = c.position;
+    // What E would use here. A store write only when it changes, not every frame.
+    const [bx, bz] = layout.boss.center;
+    let next: WalkTarget = null;
+    if (Math.hypot(x - (bx - 0.6), z - (bz - 0.6)) < DESK_REACH) next = { kind: "desk" };
+    else
+      for (const [id, { zone }] of layout.departments) {
+        const [zx, zz] = zone.center;
+        if (Math.abs(x - zx) < ZONE_W / 2 + ZONE_SIDE_MARGIN && z > zz - ZONE_D / 2 && z < zone.front + ZONE_FRONT_MARGIN) {
+          next = { kind: "department", id };
+          break;
+        }
+      }
+    const key = next ? (next.kind === "desk" ? "desk" : next.id) : "";
+    if (key !== targetKey.current) {
+      targetKey.current = key;
+      useStore.setState({ walkTarget: next });
+    }
+
     // Out on the sidewalk, the walls are between you and the labels: hide them (with a little hysteresis).
     const b = layout.bounds;
     const pad = onStreet.current ? -0.3 : 0.3;
-    const { x, z } = c.position;
     const inside = x > b.minX - pad && x < b.maxX + pad && z > b.minZ - pad && z < b.maxZ + pad;
     if (inside === !onStreet.current) return;
     onStreet.current = !inside;

@@ -71,6 +71,8 @@ function loadLightPin(): LightPin {
   }
 }
 
+export type WalkTarget = { kind: "department"; id: string } | { kind: "desk" } | null;
+
 interface UIState {
   snapshot: Snapshot | null;
   lightPin: LightPin;
@@ -80,6 +82,12 @@ interface UIState {
   viewMode: "office" | "walk"; // walk = first-person (not saved; ?view=walk starts in it)
   setViewMode: (mode: UIState["viewMode"]) => void;
   walkNote: string | null; // a note on the walk HUD (e.g. mouse look unavailable)
+  walkTarget: WalkTarget; // what E would use, by where you stand in walk mode (not saved)
+  showFps: boolean; // ?fps: frame rate and draw calls over the scene (not saved)
+  showPlan: boolean; // ?plan: the 2D map of the generated city block, top-right (not saved)
+  citySeed: number | null; // ?seed=: the city's seed for this visit; null = hashed from the company name (not saved)
+  awaySince: number | null; // when the boss left, set by the welcome-back check: the chat's "New since you were away" line (not saved)
+  taskFrom: { taskId: string; departmentId: string } | null; // a task card opened from a department's Recent work (not saved)
   connected: boolean;
   selectedTaskId: string | null;
   modal: Modal | null;
@@ -118,8 +126,14 @@ export const useStore = create<UIState>((set, get) => ({
   startOutside: false,
   showColliders: false,
   viewMode: "office",
-  setViewMode: (viewMode) => set({ viewMode, walkNote: null }),
+  setViewMode: (viewMode) => set({ viewMode, walkNote: null, walkTarget: null }),
   walkNote: null,
+  walkTarget: null,
+  showFps: false,
+  showPlan: false,
+  citySeed: null,
+  awaySince: null,
+  taskFrom: null,
   connected: false,
   selectedTaskId: null,
   modal: null,

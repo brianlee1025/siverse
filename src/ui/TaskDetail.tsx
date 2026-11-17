@@ -17,6 +17,7 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
   const selectedTaskId = useStore((s) => s.selectedTaskId);
   const selectTask = useStore((s) => s.selectTask);
   const openModal = useStore((s) => s.openModal);
+  const taskFrom = useStore((s) => s.taskFrom);
   const task = snapshot.tasks.find((t) => t.id === selectedTaskId);
 
   // Esc closes the card. It listens in the capture phase so it runs before an open window's own Esc
@@ -72,6 +73,8 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
 
   if (!task) return null;
   const department = snapshot.departments.find((d) => d.id === task.departmentId);
+  // Only the task opened from Recent work: the board, a toast or "Try again" (a new id) shows no link.
+  const back = taskFrom?.taskId === task.id ? taskFrom.departmentId : null;
   const fromClaudeCode = isClaudeCode(task);
   const active = !fromClaudeCode && (task.status === "working" || task.status === "queued");
   const schedule = task.scheduleId ? snapshot.schedules.find((s) => s.id === task.scheduleId) : undefined;
@@ -104,6 +107,19 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
     <div className="task-detail" role="dialog" aria-label={`Task: ${task.title}`}>
       <header className="task-detail__header" style={{ borderTopColor: department?.color }}>
         <div>
+          {back && department && (
+            <button
+              type="button"
+              className="task-detail__back"
+              onClick={() => {
+                useStore.setState({ taskFrom: null });
+                selectTask(null);
+                openModal({ type: "department", departmentId: back });
+              }}
+            >
+              ← Back to {department.name}
+            </button>
+          )}
           <small style={{ color: department && inkFor(department.color) }}>
             {department?.name ?? "Closed department"}
             {task.workerName ? ` · ${task.workerName}` : ""}
