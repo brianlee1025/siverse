@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef } from "react";
+import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { CanvasTexture, MeshStandardMaterial, RepeatWrapping, SRGBColorSpace, type Group } from "three";
@@ -7,6 +7,9 @@ import { BUBBLE_Z, DOOR_HALF, FRAMING_LENGTH, framing, SIDEWALK, STREET_Y, WALL_
 import { useStore } from "../store";
 import type { Phase } from "../scene/OfficeScene";
 import { Facade } from "./Facade";
+
+// Roadmap 3c-i-a: lamps, signal pole, hydrant and bin. Lazy, so the city code (cityBlock.ts) stays out of main.
+const StreetFurniture = lazy(() => import("./StreetFurniture"));
 
 // Roadmap phase 1 (steps 1a + 1b): the office as a building. Office view stays the open dollhouse; the
 // shell, roof, sign, entrance and sidewalk only show once the boss zooms out past 1.5× the framing
@@ -169,9 +172,20 @@ export const Exterior = memo(function Exterior({
   // Walk mode has no orbit controls: the shell is always there (the boss walks out through the door), and
   // the labels stay (WalkControls hides them on the street itself). Back in office view, the distance
   // rule below takes over on the next frame.
+  // Roadmap 3c-i-a: the sidewalk furniture loads the first time the building is seen from outside (or walked),
+  // never in a session that stays in office view. One re-render, once.
+  const [seen, setSeen] = useState(false);
+  const seenRef = useRef(false);
+  const markSeen = () => {
+    if (seenRef.current) return;
+    seenRef.current = true;
+    setSeen(true);
+  };
+
   useEffect(() => {
     outside.current = false;
     if (group.current) group.current.visible = walking;
+    if (walking) markSeen();
     gl.domElement.closest(".scene-canvas")?.classList.remove("scene--outside");
   }, [walking, gl]);
 
@@ -182,6 +196,7 @@ export const Exterior = memo(function Exterior({
     const d = camera.position.distanceTo(target);
     const next = outside.current ? d > HIDE_AT * framed.current : d > SHOW_AT * framed.current;
     if (next === outside.current) return;
+    if (next) markSeen();
     outside.current = next;
     group.current.visible = next;
     // drei <Html> isn't hidden by meshes, so bubbles and signs would float over the roof: hide them too.
@@ -317,6 +332,12 @@ export const Exterior = memo(function Exterior({
         <planeGeometry args={[90, 90]} />
         <meshStandardMaterial color={STREET[phase]} alphaMap={groundFade()} transparent depthWrite={false} />
       </mesh>
+      {/* Meshes only (no <Html>), so the group's `visible` hides them in office view. */}
+      {seen && (
+        <Suspense fallback={null}>
+          <StreetFurniture layout={layout} phase={phase} />
+        </Suspense>
+      )}
     </group>
     </>
   );

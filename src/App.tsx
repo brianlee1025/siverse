@@ -46,7 +46,7 @@ export function App() {
 
   // Links into the office: ?open=drive | department:<id> | file:<path>, and ?task=<id> or #task=<id>.
   // Also ?phase=morning|day|evening|night (lighting, this visit only), ?view=outside (start zoomed out),
-  // ?view=walk (start in walk mode), ?colliders (draw the walk-mode colliders) and ?fps (frame rate and
+  // ?view=walk (start in walk mode; &at=<departmentId> starts in front of that team), ?colliders (draw the walk-mode colliders) and ?fps (frame rate and
   // draw calls, bottom-right of the scene), ?plan (a 2D map of the generated city block, top-right) and
   // ?seed=<number> (the city's seed for this visit; default: hashed from the company name inside PlanDebug,
   // so the city code stays out of the main bundle).
@@ -65,6 +65,7 @@ export function App() {
     const fps = params.has("fps");
     const plan = params.has("plan");
     const seed = params.get("seed");
+    const at = params.get("at"); // only with view=walk, so the early return doesn't need it
     if (!open && !taskId && !phase && !view && !colliders && !fps && !plan && !seed) return;
     if (colliders) useStore.setState({ showColliders: true });
     if (fps) useStore.setState({ showFps: true });
@@ -73,7 +74,10 @@ export function App() {
     // Not saved: a link pins the lighting for this visit only (Settings saves it).
     if (phase && phase !== "auto" && (LIGHT_PINS as readonly string[]).includes(phase)) useStore.setState({ lightPin: phase as LightPin });
     if (view === "outside") useStore.setState({ startOutside: true });
-    if (view === "walk" && canWalk()) useStore.getState().setViewMode("walk");
+    if (view === "walk" && canWalk()) {
+      if (at && snapshot.departments.some((d) => d.id === at)) useStore.getState().walkToDepartment(at);
+      else useStore.getState().setViewMode("walk");
+    }
     if (open === "drive") openModal({ type: "drive" });
     else if (open?.startsWith("department:")) {
       const id = open.slice("department:".length);

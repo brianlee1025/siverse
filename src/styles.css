@@ -1828,10 +1828,17 @@ code {
   font-size: 15px;
 }
 /* Department window: Team is now the first section, so no divider above it. */
-.modal__body > .form--section:first-child {
+.modal__body > .form--section:first-child,
+.modal__body > .dept-walk + .form--section {
   margin-top: 0;
   padding-top: 0;
   border-top: 0;
+}
+/* "🚶 Walk there" (roadmap 2b-ii-b): a small button at the top-right, above Team. */
+.dept-walk {
+  display: flex;
+  justify-content: flex-end;
+  margin: -4px 0 4px;
 }
 /* Department window: the settings fold at the bottom, and the recent-work rows. */
 .dept-settings > summary {

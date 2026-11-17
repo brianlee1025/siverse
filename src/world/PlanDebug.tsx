@@ -25,6 +25,12 @@ export default function PlanDebug({ departments, companyName }: { departments: D
   const problems = useMemo(() => {
     const out = checkBlock(block);
     if (JSON.stringify(buildCityBlock(layout, seed)) !== JSON.stringify(block)) out.push("not deterministic");
+    // Bigger offices than this one: the deep-office guard and the frontage rule only matter there. buildLayout
+    // reads only id and headcount. Three more builds per change (≈ 0.1 ms each), never per frame.
+    for (const n of [1, 6, 9]) {
+      const fake = Array.from({ length: n }, (_, i) => ({ id: `t${i}`, headcount: 3 })) as unknown as Department[];
+      for (const p of checkBlock(buildCityBlock(buildLayout(fake), seed))) out.push(`n=${n}: ${p}`);
+    }
     return out;
   }, [block, layout, seed]);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -44,6 +50,14 @@ export default function PlanDebug({ departments, companyName }: { departments: D
       </div>
       <div className="plan-debug__line">
         {block.names.street} · {block.names.avenue}
+      </div>
+      <div className="plan-debug__line">
+        {(Object.keys(SLOT_COLOUR) as Slot["kind"][]).map((kind, i) => (
+          <span key={kind}>
+            {i > 0 && " "}
+            <span style={{ color: SLOT_COLOUR[kind] }}>●</span> {kind}
+          </span>
+        ))}
       </div>
       {problems.map((p) => (
         <div key={p} className="plan-debug__line plan-debug__problem">
@@ -94,10 +108,14 @@ function draw(el: HTMLCanvasElement, block: CityBlock) {
   for (const lot of block.lots) fill(lot.rect, USE_COLOUR[lot.use], "rgba(0, 0, 0, 0.35)");
   const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#e07a5f";
   fill(block.office, accent, "rgba(0, 0, 0, 0.5)");
+  // Round 12: bigger dots with a dark ring, so the white lamp and grey bin read on the concrete.
+  g.lineWidth = 0.75;
+  g.strokeStyle = "rgba(0, 0, 0, 0.6)";
   for (const s of block.slots) {
     g.fillStyle = SLOT_COLOUR[s.kind];
     g.beginPath();
-    g.arc(px(s.x), pz(s.z), 1.5, 0, Math.PI * 2);
+    g.arc(px(s.x), pz(s.z), 2.5, 0, Math.PI * 2);
     g.fill();
+    g.stroke();
   }
 }

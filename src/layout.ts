@@ -252,3 +252,7 @@ export function aisle(zone: Zone, seat: Vec2): { lane: Vec2; top: Vec2 } {
 export function inZone(zone: Zone, point: Vec2): boolean {
   return Math.abs(point[0] - zone.center[0]) < ZONE_W / 2 && Math.abs(point[1] - zone.center[1]) < ZONE_D / 2;
 }
+
+/** "Walk there" (roadmap 2b-ii-b): the corridor in front of a zone, facing it (yaw 0 looks along −z), tilted
+ * down a little so the desks are in view. 0.6, not GAP/2: WalkControls' E counts a zone only while z < front + 0.9. */
+export const walkSpot = (zone: Zone) => ({ x: zone.center[0], z: zone.front + 0.6, yaw: 0, pitch: -0.2 });

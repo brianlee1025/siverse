@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { PerspectiveCamera } from "@react-three/drei";
 import type { PerspectiveCamera as PerspectiveCameraImpl } from "three";
-import { ZONE_D, ZONE_W, type OfficeLayout } from "../layout";
+import { walkSpot, ZONE_D, ZONE_W, type OfficeLayout } from "../layout";
 import { useStore, type WalkTarget } from "../store";
 import { buildColliders, moveWithCollisions } from "./colliders";
 import { isTyping } from "./WalkHud";
@@ -58,6 +58,14 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
   }, [layout]);
   const spawnRef = useRef(spawn); // for R, whose key effect only depends on [gl]
   spawnRef.current = spawn;
+  // Step 2b-ii-b, "Walk there": the department's corridor spot, or null if it's gone (closed, or hidden while
+  // the AI office is off). Read through a ref in the [gl] effect, which would otherwise keep a stale layout.
+  const spotFor = (to: { departmentId: string } | null) => {
+    const zone = to && layout.departments.get(to.departmentId)?.zone;
+    return zone ? walkSpot(zone) : null;
+  };
+  const spotForRef = useRef(spotFor);
+  spotForRef.current = spotFor;
   const spawned = useRef(false);
   useLayoutEffect(() => {
     const c = cam.current;
@@ -65,10 +73,14 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
     spawned.current = true;
     c.userData.walk = true; // CameraRig waits until this camera is gone (OfficeScene.tsx)
     c.rotation.order = "YXZ";
-    // Back where the boss left off, unless the floor plan changed since. A box you start inside doesn't
-    // hold you (colliders.ts), and the first frame's inside check sets scene--street on the sidewalk.
+    // "Walk there" first, then back where the boss left off (unless the floor plan changed since), then the
+    // desk. A box you start inside doesn't hold you (colliders.ts), and the first frame's inside check sets
+    // scene--street on the sidewalk.
+    const walkTo = useStore.getState().walkTo;
+    const to = spotForRef.current(walkTo);
+    if (walkTo) useStore.setState({ walkTo: null }); // used (or gone): a later V doesn't re-teleport
     const from = lastWalk?.layout === layout ? lastWalk : null;
-    const pose = from ?? { ...spawn, pitch: 0 };
+    const pose = to ?? from ?? { ...spawn, pitch: 0 };
     c.position.set(pose.x, EYE, pose.z);
     look.current = { yaw: pose.yaw, pitch: pose.pitch };
     c.rotation.set(pose.pitch, pose.yaw, 0);
@@ -158,6 +170,18 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
         clear();
       }
       if (s.selectedTaskId && !prev.selectedTaskId) unlock();
+      // "Walk there" while already walking: jump to the team. Clearing walkTo notifies again with null,
+      // which the first check ignores.
+      if (s.walkTo && s.walkTo !== prev.walkTo) {
+        const to = spotForRef.current(s.walkTo);
+        useStore.setState({ walkTo: null });
+        const c = cam.current;
+        if (to && c) {
+          c.position.set(to.x, EYE, to.z);
+          look.current = { yaw: to.yaw, pitch: to.pitch };
+          clear(); // held keys don't carry over the jump
+        }
+      }
     });
 
     window.addEventListener("keydown", onDown);

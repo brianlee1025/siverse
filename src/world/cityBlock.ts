@@ -93,16 +93,53 @@ function frontage(from: number, to: number): [number, number][] | null {
   return out;
 }
 
-export function buildCityBlock(layout: OfficeLayout, seed: number): CityBlock {
+/** The office's corner: lot lines on the brick faces, curbs from Exterior's own sums (Exterior.tsx curbs), so
+ * data = drawing. The one place these four formulas live. */
+function corner(layout: OfficeLayout) {
+  const b = layout.bounds;
+  return { x1: b.maxX + 0.22, z1: b.maxZ + 0.22, avenueCurb: b.maxX + SIDEWALK, streetCurb: b.maxZ + 0.2 + SIDEWALK };
+}
+
+/** Roadmap 3c-i-a: the office's own sidewalk furniture and the zones it must keep clear. Seed-free: colliders
+ * and StreetFurniture need it without the company name. */
+export function frontageSlots(layout: OfficeLayout): { slots: Slot[]; keepClear: CityBlock["keepClear"]; skipped: string[] } {
   const b = layout.bounds;
   const door = layout.door[0];
+  const { x1, z1, avenueCurb, streetCurb } = corner(layout);
   const skipped: string[] = [];
 
-  // Lot lines on the brick faces; curbs from Exterior's own sums (Exterior.tsx curbs), so data = drawing.
-  const x1 = b.maxX + 0.22;
-  const z1 = b.maxZ + 0.22;
-  const avenueCurb = b.maxX + SIDEWALK;
-  const streetCurb = b.maxZ + 0.2 + SIDEWALK;
+  // Keep-clear zones on the office's frontage: the door lane, the canopy, where temps arrive, and the corner.
+  const canopyX = Math.min(door, b.maxX + 0.22 - 1.2); // Exterior's canopyX
+  const keepClear: CityBlock["keepClear"] = [
+    { name: "door lane", rect: rect(door - 1.5, door + 1.5, z1, streetCurb) },
+    { name: "canopy", rect: rect(canopyX - 1.2, canopyX + 1.2, z1, z1 + 1.4) },
+    { name: "arrivals", circle: { x: door, z: b.maxZ + 3, r: 1 } }, // layout.ts pathToSeat's street point
+    { name: "corner", circle: { x: avenueCurb, z: streetCurb, r: 3 } },
+  ];
+
+  const wanted: Slot[] = [
+    { kind: "lamp", x: x1 - 7.5, z: streetCurb - 0.6, rotY: 0 },
+    { kind: "lamp", x: x1 - 27.5, z: streetCurb - 0.6, rotY: 0 },
+    { kind: "lamp", x: avenueCurb - 0.6, z: z1 - 2, rotY: Math.PI / 2 },
+    { kind: "lamp", x: avenueCurb - 0.6, z: z1 - 14, rotY: Math.PI / 2 },
+    { kind: "signal", x: avenueCurb - 0.5, z: streetCurb - 0.5, rotY: 0 },
+    { kind: "hydrant", x: avenueCurb - 3.5, z: streetCurb - 0.6, rotY: 0 },
+    { kind: "bin", x: x1 - 18, z: streetCurb - 0.6, rotY: 0 },
+  ];
+  const slots: Slot[] = [];
+  for (const s of wanted) {
+    const hit = blockedBy(s, keepClear);
+    if (hit) skipped.push(`${s.kind} at (${r2(s.x)}, ${r2(s.z)}): in the ${hit}`);
+    else slots.push(s);
+  }
+  return { slots, keepClear, skipped };
+}
+
+export function buildCityBlock(layout: OfficeLayout, seed: number): CityBlock {
+  const b = layout.bounds;
+  const skipped: string[] = [];
+
+  const { x1, z1, avenueCurb, streetCurb } = corner(layout);
   const x0 = x1 - (BLOCK_LEN - 2 * SIDEWALK);
   const z0 = z1 - BLOCK_D;
   const farCurb = x0 - SIDEWALK;
@@ -164,30 +201,10 @@ export function buildCityBlock(layout: OfficeLayout, seed: number): CityBlock {
     { id: "far", name: "", rect: rect(xFar, farCurb, zFar, zNear) },
   ];
 
-  // Keep-clear zones on the office's frontage: the door lane, the canopy, where temps arrive, and the corner.
-  const canopyX = Math.min(door, b.maxX + 0.22 - 1.2); // Exterior's canopyX
-  const keepClear: CityBlock["keepClear"] = [
-    { name: "door lane", rect: rect(door - 1.5, door + 1.5, z1, streetCurb) },
-    { name: "canopy", rect: rect(canopyX - 1.2, canopyX + 1.2, z1, z1 + 1.4) },
-    { name: "arrivals", circle: { x: door, z: b.maxZ + 3, r: 1 } }, // layout.ts pathToSeat's street point
-    { name: "corner", circle: { x: avenueCurb, z: streetCurb, r: 3 } },
-  ];
-
-  const wanted: Slot[] = [
-    { kind: "lamp", x: x1 - 7.5, z: streetCurb - 0.6, rotY: 0 },
-    { kind: "lamp", x: x1 - 27.5, z: streetCurb - 0.6, rotY: 0 },
-    { kind: "lamp", x: avenueCurb - 0.6, z: z1 - 2, rotY: Math.PI / 2 },
-    { kind: "lamp", x: avenueCurb - 0.6, z: z1 - 14, rotY: Math.PI / 2 },
-    { kind: "signal", x: avenueCurb - 0.5, z: streetCurb - 0.5, rotY: 0 },
-    { kind: "hydrant", x: avenueCurb - 3.5, z: streetCurb - 0.6, rotY: 0 },
-    { kind: "bin", x: x1 - 18, z: streetCurb - 0.6, rotY: 0 },
-  ];
-  const slots: Slot[] = [];
-  for (const s of wanted) {
-    const hit = blockedBy(s, keepClear);
-    if (hit) skipped.push(`${s.kind} at (${r2(s.x)}, ${r2(s.z)}): in the ${hit}`);
-    else slots.push(s);
-  }
+  // The office's own frontage (seed-free, shared with StreetFurniture and the colliders).
+  const frontageData = frontageSlots(layout);
+  const { slots, keepClear } = frontageData;
+  skipped.push(...frontageData.skipped);
 
   return { seed, block: rect(x0, x1, z0, z1), office, lots, sidewalks, streets, slots, keepClear, skipped, names };
 }
@@ -238,6 +255,10 @@ export function checkBlock(block: CityBlock): string[] {
     if (!block.sidewalks.some((w) => inRect(w, s.x, s.z))) problems.push(`${s.kind} at (${r2(s.x)}, ${r2(s.z)}) is off the sidewalk`);
     const hit = blockedBy(s, block.keepClear);
     if (hit) problems.push(`${s.kind} at (${r2(s.x)}, ${r2(s.z)}) is in the ${hit}`);
+    // Round 12 (R12-M23): nothing within 0.5 m of the office's brick faces (its lot lines at x1 and z1).
+    const o = office;
+    if (s.x > o.x0 - 0.5 && s.x < o.x1 + 0.5 && s.z > o.z0 - 0.5 && s.z < o.z1 + 0.5)
+      problems.push(`${s.kind} at (${r2(s.x)}, ${r2(s.z)}) is within 0.5 m of the office`);
   }
   return problems;
 }

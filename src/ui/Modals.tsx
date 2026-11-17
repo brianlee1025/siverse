@@ -19,6 +19,7 @@ import {
 import { useDraft } from "../drafts";
 import { chainFrom } from "../failures";
 import { api, LIGHT_PINS, useStore, type LightPin } from "../store";
+import { canWalk, requestLook } from "../world/WalkHud";
 import { DriveMarkdown } from "./DriveMarkdown";
 
 export function Modals({ snapshot }: { snapshot: Snapshot }) {
@@ -489,6 +490,24 @@ function DepartmentModal({
   // so useUnsaved still sees edits and Esc/✕ still ask.
   return (
     <Modal title={department.name}>
+      {/* Roadmap 2b-ii-b: first person, in front of this team. Only where walking works (a mouse). */}
+      {canWalk() && (
+        <div className="dept-walk">
+          <button
+            type="button"
+            className="btn btn--sm btn--ghost"
+            onClick={() => {
+              if (unsaved.size && !confirm("Discard your changes?")) return; // the same guard as Recent work
+              openModal(null);
+              useStore.getState().walkToDepartment(department.id);
+              requestLook(); // still inside the click: pointer lock needs this user gesture
+            }}
+            title="Walk to this team in first person"
+          >
+            🚶 Walk there
+          </button>
+        </div>
+      )}
       <TeamSection department={department} staff={staff} tasks={tasks} />
 
       <form className="form form--section" onSubmit={assign}>

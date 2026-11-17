@@ -2,6 +2,9 @@
 // same layout the scene draws from, so a moved desk moves its collider too. Axis-aligned boxes on the
 // floor plane, in world units. Staff aren't colliders yet (roadmap 2c).
 import { DOOR_HALF, SIDEWALK, ZONE_W, type OfficeLayout, type Vec2 } from "../layout";
+import { frontageSlots } from "./cityBlock"; // lazy-only, like this file (WalkControls, ColliderDebug)
+
+const SLOT_SIZE = { lamp: 0.3, signal: 0.3, hydrant: 0.4, bin: 0.6 } as const;
 
 export interface Box {
   minX: number;
@@ -61,6 +64,11 @@ export function buildColliders(layout: OfficeLayout): Box[] {
     out.push({ minX: layout.kitchenX - 1.5, maxX: layout.kitchenX + 1.4, minZ: b.minZ, maxZ: b.minZ + 0.7 });
   // Corner plants.
   out.push(at(b.minX + 0.8, b.minZ + 0.8, 1.1, 1.1), at(b.maxX - 0.8, b.minZ + 0.8, 0.9, 0.9), at(b.minX + 0.8, b.maxZ - 0.8, 0.8, 0.8));
+
+  // Roadmap 3c-i-a: the office's sidewalk furniture (StreetFurniture.tsx). Footprints by kind, a bit larger
+  // than the meshes (a 0.14 m pole → 0.3) so a glancing walk doesn't clip it on screen; the player's radius is
+  // added in moveWithCollisions.
+  for (const s of frontageSlots(layout).slots) out.push(at(s.x, s.z, SLOT_SIZE[s.kind], SLOT_SIZE[s.kind]));
 
   // The curb ring: out of the door and round both sides, but not onto the street (no gravity yet).
   // Phase 3 replaces it with the real street. There's no sidewalk behind the building.

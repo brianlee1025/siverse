@@ -31,8 +31,11 @@ function writeSeen() {
 interface Line {
   key: string;
   text: string;
-  taskId?: string; // the first matching task; lines without one are plain text
+  taskId?: string; // the first matching task; lines without one (or a path) are plain text
+  path?: string; // a drive file: the line opens the file window
 }
+
+const shortPath = (p: string) => (p.length > 40 ? "…" + p.slice(-39) : p);
 
 /** Worked out once, when the card opens, from the raw snapshot (office tasks hide while the AI office is off). */
 function linesSince(snapshot: Snapshot, since: number): Line[] {
@@ -55,6 +58,11 @@ function linesSince(snapshot: Snapshot, since: number): Line[] {
   if (failed.length) lines.push({ key: "failed", text: `⚠️ ${capped}${n(failed.length, "task")} couldn't finish`, taskId: newest(failed).id });
   if (timedOut.length) lines.push({ key: "timeout", text: `⌛ ${n(timedOut.length, "approval")} timed out`, taskId: timedOut[0].id });
   if (done.length) lines.push({ key: "done", text: `✅ ${capped}${n(done.length, "task")} done`, taskId: newest(done).id });
+  // What the time away produced: the files written by tasks done since (newest task first; a path written
+  // twice counts once). Done tasks only: a failed task's half-written files aren't "made".
+  const files = [...new Set([...done].sort((a, b) => b.finishedAt! - a.finishedAt!).flatMap((t) => t.outputs ?? []))];
+  if (files.length)
+    lines.push({ key: "files", text: `📄 ${capped}${n(files.length, "new file")} · newest: ${shortPath(files[0])}`, path: files[0] });
   if (late.length) lines.push({ key: "late", text: `⏰ ${n(late.length, "recurring task")} started late` });
   return lines;
 }
@@ -178,7 +186,18 @@ export function WelcomeBack() {
       <ul className="welcome__lines">
         {lines.map((line) => (
           <li key={line.key}>
-            {line.taskId ? (
+            {line.path ? (
+              <button
+                className="welcome__line"
+                title={line.path}
+                onClick={() => {
+                  useStore.getState().openModal({ type: "file", path: line.path! });
+                  setCard(null);
+                }}
+              >
+                {line.text}
+              </button>
+            ) : line.taskId ? (
               <button
                 className="welcome__line"
                 onClick={() => {

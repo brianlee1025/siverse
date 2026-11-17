@@ -83,6 +83,8 @@ interface UIState {
   setViewMode: (mode: UIState["viewMode"]) => void;
   walkNote: string | null; // a note on the walk HUD (e.g. mouse look unavailable)
   walkTarget: WalkTarget; // what E would use, by where you stand in walk mode (not saved)
+  walkTo: { departmentId: string } | null; // "Walk there": WalkControls moves the boss in front of that team, then clears it (not saved)
+  walkToDepartment: (departmentId: string) => void;
   showFps: boolean; // ?fps: frame rate and draw calls over the scene (not saved)
   showPlan: boolean; // ?plan: the 2D map of the generated city block, top-right (not saved)
   citySeed: number | null; // ?seed=: the city's seed for this visit; null = hashed from the company name (not saved)
@@ -129,6 +131,9 @@ export const useStore = create<UIState>((set, get) => ({
   setViewMode: (viewMode) => set({ viewMode, walkNote: null, walkTarget: null }),
   walkNote: null,
   walkTarget: null,
+  walkTo: null,
+  // A fresh object every click (identity is the pulse). Mounts walk mode if it isn't on yet.
+  walkToDepartment: (departmentId) => set({ walkTo: { departmentId }, viewMode: "walk", walkNote: null, walkTarget: null }),
   showFps: false,
   showPlan: false,
   citySeed: null,
