@@ -71,7 +71,33 @@ function loadLightPin(): LightPin {
   }
 }
 
-export type WalkTarget = { kind: "department"; id: string } | { kind: "desk" } | null;
+/** Round 13: walking settings for this browser (look speed, field of view, invert up/down). */
+export interface WalkPrefs {
+  look: number; // × the base mouse look and arrow-key turn speed
+  fov: number; // degrees, vertical
+  invertY: boolean;
+}
+export const WALK_DEFAULTS: WalkPrefs = { look: 1, fov: 70, invertY: false };
+const WALK_KEY = "siverse.walk";
+const clampTo = (n: unknown, lo: number, hi: number, d: number) =>
+  typeof n === "number" && Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d;
+function cleanWalkPrefs(p: Partial<Record<keyof WalkPrefs, unknown>> | null): WalkPrefs {
+  return {
+    look: clampTo(p?.look, 0.4, 2.5, WALK_DEFAULTS.look),
+    fov: clampTo(p?.fov, 60, 90, WALK_DEFAULTS.fov),
+    invertY: p?.invertY === true,
+  };
+}
+function loadWalkPrefs(): WalkPrefs {
+  try {
+    const raw = JSON.parse(localStorage.getItem(WALK_KEY) ?? "null");
+    return cleanWalkPrefs(raw && typeof raw === "object" ? raw : null);
+  } catch {
+    return { ...WALK_DEFAULTS };
+  }
+}
+
+export type WalkTarget ={ kind: "department"; id: string } | { kind: "desk" } | null;
 
 interface UIState {
   snapshot: Snapshot | null;
@@ -85,6 +111,9 @@ interface UIState {
   walkTarget: WalkTarget; // what E would use, by where you stand in walk mode (not saved)
   walkTo: { departmentId: string } | null; // "Walk there": WalkControls moves the boss in front of that team, then clears it (not saved)
   walkToDepartment: (departmentId: string) => void;
+  walkPlace: string | null; // where you stand outside, for the walk HUD chip (not saved)
+  walkPrefs: WalkPrefs; // saved in this browser
+  setWalkPrefs: (patch: Partial<WalkPrefs>) => void;
   showFps: boolean; // ?fps: frame rate and draw calls over the scene (not saved)
   showPlan: boolean; // ?plan: the 2D map of the generated city block, top-right (not saved)
   citySeed: number | null; // ?seed=: the city's seed for this visit; null = hashed from the company name (not saved)
@@ -128,7 +157,18 @@ export const useStore = create<UIState>((set, get) => ({
   startOutside: false,
   showColliders: false,
   viewMode: "office",
-  setViewMode: (viewMode) => set({ viewMode, walkNote: null, walkTarget: null }),
+  setViewMode: (viewMode) => set({ viewMode, walkNote: null, walkTarget: null, walkPlace: null }),
+  walkPlace: null,
+  walkPrefs: loadWalkPrefs(),
+  setWalkPrefs: (patch) => {
+    const walkPrefs = cleanWalkPrefs({ ...get().walkPrefs, ...patch });
+    try {
+      localStorage.setItem(WALK_KEY, JSON.stringify(walkPrefs));
+    } catch {
+      // Private mode or full storage: the choice just won't survive a reload.
+    }
+    set({ walkPrefs });
+  },
   walkNote: null,
   walkTarget: null,
   walkTo: null,

@@ -41,6 +41,7 @@ export function WalkHud() {
   const walking = useStore((s) => s.viewMode === "walk");
   const setViewMode = useStore((s) => s.setViewMode);
   const note = useStore((s) => s.walkNote);
+  const place = useStore((s) => s.walkPlace); // round 13: the street you stand on (WalkControls)
   // The raw snapshot: what the sticky toast and the manager count.
   const asking = useStore((s) => s.snapshot?.tasks.filter((t) => t.approval).length ?? 0);
   // R6: what E would use where you stand (WalkControls writes it on a change). A gone department shows nothing.
@@ -130,6 +131,11 @@ export function WalkHud() {
         </div>
       )}
       {note && <div className="walk-note">{note}</div>}
+      {place && (
+        <div className="walk-place" role="status">
+          📍 {place}
+        </div>
+      )}
       {/* Not a button: the toast stays the one place to answer. */}
       {asking > 0 && (
         <div className="walk-ask" role="status">

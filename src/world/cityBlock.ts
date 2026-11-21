@@ -95,7 +95,7 @@ function frontage(from: number, to: number): [number, number][] | null {
 
 /** The office's corner: lot lines on the brick faces, curbs from Exterior's own sums (Exterior.tsx curbs), so
  * data = drawing. The one place these four formulas live. */
-function corner(layout: OfficeLayout) {
+export function corner(layout: OfficeLayout) {
   const b = layout.bounds;
   return { x1: b.maxX + 0.22, z1: b.maxZ + 0.22, avenueCurb: b.maxX + SIDEWALK, streetCurb: b.maxZ + 0.2 + SIDEWALK };
 }
@@ -133,6 +133,13 @@ export function frontageSlots(layout: OfficeLayout): { slots: Slot[]; keepClear:
     else slots.push(s);
   }
   return { slots, keepClear, skipped };
+}
+
+/** The corner's two street names for a seed (round 13: the plates and the walk chip use them without building
+ * the whole block). Its own rng stream, so nothing else shifts. */
+export function streetNames(seed: number): CityBlock["names"] {
+  const nr = rngFor(seed, "names");
+  return { street: `W ${ordinal(between(nr, 14, 59))} St`, avenue: pick(nr, AVENUES) };
 }
 
 export function buildCityBlock(layout: OfficeLayout, seed: number): CityBlock {
@@ -188,8 +195,7 @@ export function buildCityBlock(layout: OfficeLayout, seed: number): CityBlock {
     rect(farCurb, x0, z0, z1), // far avenue
   ];
 
-  const nr = rngFor(seed, "names");
-  const names = { street: `W ${ordinal(between(nr, 14, 59))} St`, avenue: pick(nr, AVENUES) };
+  const names = streetNames(seed);
   const xFar = farCurb - AVENUE_W;
   const xNear = avenueCurb + AVENUE_W;
   const zFar = backCurb - STREET_W;

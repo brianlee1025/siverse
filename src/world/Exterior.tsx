@@ -10,6 +10,8 @@ import { Facade } from "./Facade";
 
 // Roadmap 3c-i-a: lamps, signal pole, hydrant and bin. Lazy, so the city code (cityBlock.ts) stays out of main.
 const StreetFurniture = lazy(() => import("./StreetFurniture"));
+// City round (2026-11-21): the 5 × 5 blocks, towers, street furniture, skyline and sky. Lazy, same gate.
+const City = lazy(() => import("./City"));
 
 // Roadmap phase 1 (steps 1a + 1b): the office as a building. Office view stays the open dollhouse; the
 // shell, roof, sign, entrance and sidewalk only show once the boss zooms out past 1.5× the framing
@@ -181,6 +183,15 @@ export const Exterior = memo(function Exterior({
     seenRef.current = true;
     setSeen(true);
   };
+  // ?view=outside: start the furniture chunk with the first frames, not after the first outside frame (headless
+  // ?fps lines were stale in round 12). App sets startOutside after our first render and CameraRig clears it,
+  // so subscribe (synchronous) instead of reading it once. Office view is unaffected: only that link sets it.
+  useEffect(() => {
+    if (useStore.getState().startOutside) markSeen();
+    return useStore.subscribe((s) => {
+      if (s.startOutside) markSeen();
+    });
+  }, []);
 
   useEffect(() => {
     outside.current = false;
@@ -335,7 +346,12 @@ export const Exterior = memo(function Exterior({
       {/* Meshes only (no <Html>), so the group's `visible` hides them in office view. */}
       {seen && (
         <Suspense fallback={null}>
-          <StreetFurniture layout={layout} phase={phase} />
+          <StreetFurniture layout={layout} phase={phase} name={name} />
+        </Suspense>
+      )}
+      {seen && (
+        <Suspense fallback={null}>
+          <City layout={layout} phase={phase} name={name} />
         </Suspense>
       )}
     </group>

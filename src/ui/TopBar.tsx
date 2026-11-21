@@ -2,6 +2,7 @@ import type { PlanView, Snapshot, UsageWindow } from "../../shared/types";
 import { isClaudeCode } from "../../shared/types";
 import { api, useStore } from "../store";
 import { claudeCodeIsLive } from "../claudeCode";
+import { formatTime } from "../format";
 
 export function TopBar({ snapshot }: { snapshot: Snapshot }) {
   const openModal = useStore((s) => s.openModal);
@@ -153,15 +154,6 @@ function Meter({ label, window, className = "" }: { label: string; window: Usage
       <span className="meter__value">{left === null ? "—" : `${Math.round(left)}%`}</span>
     </span>
   );
-}
-
-/** "15:00" today, otherwise "Tue 09:00". */
-function formatTime(at: number) {
-  const date = new Date(at);
-  const time = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  return date.toDateString() === new Date().toDateString()
-    ? time
-    : `${date.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
 }
 
 function Stat({ label, value, title }: { label: string; value: number | string; title?: string }) {

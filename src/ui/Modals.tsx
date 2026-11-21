@@ -18,7 +18,7 @@ import {
 } from "../../shared/types";
 import { useDraft } from "../drafts";
 import { chainFrom } from "../failures";
-import { api, LIGHT_PINS, useStore, type LightPin } from "../store";
+import { api, LIGHT_PINS, useStore, WALK_DEFAULTS, type LightPin } from "../store";
 import { canWalk, requestLook } from "../world/WalkHud";
 import { DriveMarkdown } from "./DriveMarkdown";
 
@@ -121,6 +121,10 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
   const lightPin = useStore((s) => s.lightPin);
   const setLightPin = useStore((s) => s.setLightPin);
   const showFps = useStore((s) => s.showFps);
+  // Round 13 (R6): walking settings, only where walking works (a mouse).
+  const walkPrefs = useStore((s) => s.walkPrefs);
+  const setWalkPrefs = useStore((s) => s.setWalkPrefs);
+  const [walkable] = useState(canWalk);
   const [companyName, setCompanyName] = useState(settings.companyName);
   const [aiOffice, setAiOffice] = useState(settings.aiOffice);
   const [apiKey, setApiKey] = useState("");
@@ -296,6 +300,42 @@ function SettingsModal({ snapshot }: { snapshot: Snapshot }) {
             <input type="checkbox" checked={showFps} onChange={(e) => useStore.setState({ showFps: e.target.checked })} />
             Show frame rate and draw calls
           </label>
+          {walkable && (
+            <>
+              <p className="settings-walk__title">Walking</p>
+              <label className="settings-walk__row">
+                Look speed
+                <input
+                  type="range"
+                  min={0.4}
+                  max={2.5}
+                  step={0.1}
+                  value={walkPrefs.look}
+                  onChange={(e) => setWalkPrefs({ look: Number(e.target.value) })}
+                />
+                <span className="settings-walk__value">{walkPrefs.look.toFixed(1)}×</span>
+              </label>
+              <label className="settings-walk__row">
+                Field of view
+                <input
+                  type="range"
+                  min={60}
+                  max={90}
+                  step={1}
+                  value={walkPrefs.fov}
+                  onChange={(e) => setWalkPrefs({ fov: Number(e.target.value) })}
+                />
+                <span className="settings-walk__value">{walkPrefs.fov}°</span>
+              </label>
+              <label className="checkbox">
+                <input type="checkbox" checked={walkPrefs.invertY} onChange={(e) => setWalkPrefs({ invertY: e.target.checked })} />
+                Invert up/down
+              </label>
+              <button type="button" className="btn btn--sm btn--ghost" onClick={() => setWalkPrefs(WALK_DEFAULTS)}>
+                Reset walking
+              </button>
+            </>
+          )}
           <p className="hint tiny">Only changes how the office looks here.</p>
         </fieldset>
       </div>

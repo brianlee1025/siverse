@@ -3,7 +3,8 @@ import type { Department } from "../../shared/types";
 import { buildLayout } from "../layout";
 import { useStore } from "../store";
 import { buildCityBlock, checkBlock, type CityBlock, type LotUse, type Rect, type Slot } from "./cityBlock";
-import { hashSeed } from "./rng";
+import { citySeedFor } from "./rng";
+import { signalAt } from "./signals";
 
 // ?plan (lazy chunk, roadmap 3a-i): a flat 2D map of the generated street block, top-right of the scene, with
 // checkBlock's problems underneath. It's the only importer of cityBlock.ts and rng.ts, so the city code stays
@@ -20,7 +21,7 @@ export default function PlanDebug({ departments, companyName }: { departments: D
   const layout = useMemo(() => buildLayout(departments), [floorPlanKey]);
   const citySeed = useStore((s) => s.citySeed);
   const walking = useStore((s) => s.viewMode === "walk");
-  const seed = citySeed ?? hashSeed(companyName.trim() || "Office");
+  const seed = citySeedFor(companyName, citySeed);
   const block = useMemo(() => buildCityBlock(layout, seed), [layout, seed]);
   const problems = useMemo(() => {
     const out = checkBlock(block);
@@ -30,6 +31,25 @@ export default function PlanDebug({ departments, companyName }: { departments: D
     for (const n of [1, 6, 9]) {
       const fake = Array.from({ length: n }, (_, i) => ({ id: `t${i}`, headcount: 3 })) as unknown as Department[];
       for (const p of checkBlock(buildCityBlock(buildLayout(fake), seed))) out.push(`n=${n}: ${p}`);
+    }
+    // Round 13: the signal's timing over one 90 s cycle, in 0.5 s steps. Never both green, and green only moves
+    // to the other approach through an all-red sample (checked across the wrap too).
+    const samples = Array.from({ length: 180 }, (_, i) => signalAt(i * 500));
+    const greenOf = (s: (typeof samples)[number]) => (s.avenue === "green" ? "avenue" : s.street === "green" ? "street" : null);
+    if (samples.some((s) => s.avenue === "green" && s.street === "green")) out.push("signal: both green");
+    const allRed = (s: (typeof samples)[number]) => s.avenue === "red" && s.street === "red";
+    // The wrap: start from the cycle's last green, and count any all-red after it (88-90 s comes before sample 0).
+    let last = samples.length - 1;
+    while (last >= 0 && !greenOf(samples[last])) last--;
+    let lastGreen = last >= 0 ? greenOf(samples[last]) : null;
+    let sawAllRed = samples.slice(last + 1).some(allRed);
+    for (const s of samples) {
+      if (allRed(s)) sawAllRed = true;
+      const g = greenOf(s);
+      if (!g) continue;
+      if (g !== lastGreen && !sawAllRed && !out.includes("signal: no all-red between greens")) out.push("signal: no all-red between greens");
+      lastGreen = g;
+      sawAllRed = false;
     }
     return out;
   }, [block, layout, seed]);

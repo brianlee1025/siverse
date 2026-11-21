@@ -1291,6 +1291,23 @@ code {
   border: 1px solid var(--warn);
   color: var(--ink);
 }
+/* Round 13: where you stand outside. Top-centre is free while walking (welcome card top-left, chips top-right,
+   ?plan hidden in walk mode). */
+.walk-place {
+  position: absolute;
+  z-index: 21;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 24px);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(35, 38, 45, 0.75);
+  color: #fff;
+  font-size: 13px;
+  white-space: nowrap;
+  pointer-events: none;
+}
 .walk-dot {
   position: absolute;
   z-index: 21;
@@ -1404,6 +1421,17 @@ code {
 .task-detail__back:focus-visible {
   color: var(--ink);
   text-decoration: underline;
+}
+/* Round 13: "← Back to" and "🚶 Walk to" share one line when both show. */
+.task-detail__back:has(+ .task-detail__back),
+.task-detail__back + .task-detail__back {
+  display: inline-block;
+}
+.task-detail__back + .task-detail__back {
+  margin-left: 10px;
+}
+.task-detail__back + .task-detail__back + small {
+  display: block; /* the department line still starts its own line */
 }
 .task-detail__header h3 {
   margin: 2px 0 0;
@@ -1951,6 +1979,33 @@ code {
 }
 .form .checkbox input {
   width: auto;
+}
+/* Round 13: Settings → This browser → Walking (label, slider, value on one line). */
+.settings-walk__title {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.form .settings-walk__row {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.form .settings-walk__row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  accent-color: var(--accent);
+}
+.settings-walk__value {
+  min-width: 3.2em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 .form .toggle {
   align-items: flex-start;

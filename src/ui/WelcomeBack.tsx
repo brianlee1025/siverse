@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Snapshot } from "../../shared/types";
 import { isClaudeCode } from "../../shared/types";
+import { chainFrom } from "../failures";
+import { formatTime } from "../format";
 import { useStore } from "../store";
 import { when } from "./TaskDetail";
 
@@ -64,6 +66,19 @@ function linesSince(snapshot: Snapshot, since: number): Line[] {
   if (files.length)
     lines.push({ key: "files", text: `📄 ${capped}${n(files.length, "new file")} · newest: ${shortPath(files[0])}`, path: files[0] });
   if (late.length) lines.push({ key: "late", text: `⏰ ${n(late.length, "recurring task")} started late` });
+  // Round 13: what's coming, but only on a card that already has news (alone it would open the card after
+  // every break), and only while the AI office is on (schedules don't run while it's off: schedules.ts
+  // tickSchedules). "after" schedules have no time of their own (nextRunAt is MAX_SAFE_INTEGER).
+  if (lines.length && snapshot.settings.aiOffice) {
+    const now = Date.now();
+    const next = snapshot.schedules
+      .filter((s) => s.enabled && s.cadence.kind !== "after" && s.nextRunAt > now)
+      .sort((a, b) => a.nextRunAt - b.nextRunAt)[0];
+    if (next) {
+      const after = chainFrom(next, snapshot.schedules).length - 1;
+      lines.push({ key: "next", text: `⏭ Next: ${next.title} · ${formatTime(next.nextRunAt)}${after ? ` · + ${after} after it` : ""}` });
+    }
+  }
   return lines;
 }
 
@@ -168,7 +183,8 @@ export function WelcomeBack() {
 
   // The ✋ line stays live (answering from the toast removes it); the other lines are "since you left".
   const lines = card ? liveLines(card.lines, askingNow, firstAsk) : [];
-  const empty = card !== null && lines.length === 0;
+  // The "⏭ Next" line alone isn't news (once the ✋ line is answered away, the card closes).
+  const empty = card !== null && lines.every((l) => l.key === "next");
   useEffect(() => {
     if (empty) setCard(null);
   }, [empty]);

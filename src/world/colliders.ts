@@ -27,7 +27,8 @@ const at = (cx: number, cz: number, w: number, d: number): Box => ({
 });
 const atV = ([x, z]: Vec2, w: number, d: number) => at(x, z, w, d);
 
-export function buildColliders(layout: OfficeLayout): Box[] {
+/** `ring: false` (walk mode since the city round): no curb ring, the city grid's own boundary holds you instead. */
+export function buildColliders(layout: OfficeLayout, ring = true): Box[] {
   const b = layout.bounds;
   const door = layout.door[0];
   const out: Box[] = [];
@@ -72,6 +73,7 @@ export function buildColliders(layout: OfficeLayout): Box[] {
 
   // The curb ring: out of the door and round both sides, but not onto the street (no gravity yet).
   // Phase 3 replaces it with the real street. There's no sidewalk behind the building.
+  if (!ring) return out;
   const x0 = b.minX - SIDEWALK;
   const x1 = b.maxX + SIDEWALK;
   const zBack = b.minZ - 0.2;

@@ -4,7 +4,10 @@ import { PerspectiveCamera } from "@react-three/drei";
 import type { PerspectiveCamera as PerspectiveCameraImpl } from "three";
 import { walkSpot, ZONE_D, ZONE_W, type OfficeLayout } from "../layout";
 import { useStore, type WalkTarget } from "../store";
-import { buildColliders, moveWithCollisions } from "./colliders";
+import { motion } from "../motion";
+import { buildColliders, moveWithCollisions, type Box } from "./colliders";
+import { cityFor } from "./cityGrid";
+import { citySeedFor } from "./rng";
 import { isTyping } from "./WalkHud";
 
 // Roadmap step 2a-ii: first-person walking (lazy chunk, loaded on the first walk). Its own camera, so the
@@ -15,8 +18,8 @@ import { isTyping } from "./WalkHud";
 const EYE = 1.6;
 const WALK = 1.4; // m/s
 const RUN = 3;
-const TURN = 1.8; // rad/s, ← →
-const LOOK = 0.0022; // rad per mouse pixel
+const TURN = 1.8; // rad/s, ← → (× the look speed setting, kept within 0.8–3)
+const LOOK = 0.0022; // rad per mouse pixel (× the look speed setting, store.walkPrefs)
 const PITCH_MAX = 1.4;
 const STEP = 0.1; // sub-step length, so a fast frame can't jump through a thin box
 
@@ -35,11 +38,35 @@ const askCount = (s: ReturnType<typeof useStore.getState>) => s.snapshot?.tasks.
  * layout object: OfficeScene keeps it until the floor plan changes, so a hire falls back to the spawn. */
 let lastWalk: { layout: OfficeLayout; x: number; z: number; yaw: number; pitch: number } | null = null;
 
-export default function WalkControls({ layout }: { layout: OfficeLayout }) {
+export default function WalkControls({ layout, name }: { layout: OfficeLayout; name: string }) {
   const cam = useRef<PerspectiveCameraImpl>(null);
+  // Round 13 (R6): look speed, field of view, invert up/down. Read through a ref so the [gl] effect never re-runs.
+  const prefs = useStore((s) => s.walkPrefs);
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
+  // Round 13 (R5): the 📍 chip names the street you stand on. One seed formula (citySeedFor), as ?plan.
+  // City round: the whole grid (the same cached one City draws) gives the names, the ground and the colliders.
+  const citySeed = useStore((s) => s.citySeed);
+  const grid = useMemo(() => cityFor(layout, citySeedFor(name, citySeed)), [layout, name, citySeed]);
+  const gridRef = useRef(grid);
+  gridRef.current = grid;
+  const placeKey = useRef<string | null>("");
   const gl = useThree((s) => s.gl);
   const setEvents = useThree((s) => s.setEvents);
-  const boxes = useMemo(() => buildColliders(layout), [layout]);
+  // The office's own boxes (no curb ring) + the city's (≈ 1,300). Each frame only tests the boxes within 25 m,
+  // re-picked after every 5 m walked, so a step costs the same as before the city.
+  const allBoxes = useMemo(() => [...buildColliders(layout, false), ...grid.colliders], [layout, grid]);
+  const near = useRef<{ x: number; z: number; boxes: Box[] } | null>(null);
+  const nearBoxes = (x: number, z: number) => {
+    const n = near.current;
+    if (n && Math.hypot(x - n.x, z - n.z) < 5) return n.boxes;
+    const r = 25;
+    const boxes = allBoxes.filter((b) => b.maxX > x - r && b.minX < x + r && b.maxZ > z - r && b.minZ < z + r);
+    near.current = { x, z, boxes };
+    return boxes;
+  };
+  useEffect(() => void (near.current = null), [allBoxes]);
+  const floorY = useRef(0); // eased: down the curb to the street (STREET_Y) and back up
   const held = useRef(new Set<string>());
   const look = useRef({ yaw: 0, pitch: 0 });
   const onStreet = useRef(false);
@@ -104,7 +131,7 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
     return () => {
       setEvents({ enabled: true });
       canvas?.classList.remove("scene--street");
-      useStore.setState({ walkTarget: null });
+      useStore.setState({ walkTarget: null, walkPlace: null });
       // --label-boost is rewritten by CameraRig on its first frame (its boost ref starts at 0).
     };
   }, [setEvents, gl]);
@@ -154,8 +181,10 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
     const onMouse = (e: MouseEvent) => {
       if (!locked() && !dragging.current) return;
       const l = look.current;
-      l.yaw -= e.movementX * LOOK;
-      l.pitch = Math.max(-PITCH_MAX, Math.min(PITCH_MAX, l.pitch - e.movementY * LOOK));
+      const p = prefsRef.current;
+      const k = LOOK * p.look;
+      l.yaw -= e.movementX * k;
+      l.pitch = Math.max(-PITCH_MAX, Math.min(PITCH_MAX, l.pitch - e.movementY * k * (p.invertY ? -1 : 1)));
     };
 
     // R7: an ask arriving (count rises), a window or a task card opening all release the lock; a window
@@ -214,8 +243,9 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
     const delta = Math.min(rawDelta, 0.05);
     const k = held.current;
     const l = look.current;
-    if (k.has("ArrowLeft")) l.yaw += TURN * delta;
-    if (k.has("ArrowRight")) l.yaw -= TURN * delta;
+    const turn = Math.min(3, Math.max(0.8, TURN * prefsRef.current.look));
+    if (k.has("ArrowLeft")) l.yaw += turn * delta;
+    if (k.has("ArrowRight")) l.yaw -= turn * delta;
     c.rotation.set(l.pitch, l.yaw, 0);
 
     const forward = (k.has("KeyW") || k.has("ArrowUp") ? 1 : 0) - (k.has("KeyS") || k.has("ArrowDown") ? 1 : 0);
@@ -231,11 +261,18 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
       const steps = Math.max(1, Math.ceil(Math.hypot(mx, mz) / STEP));
       let x = c.position.x;
       let z = c.position.z;
+      const boxes = nearBoxes(x, z);
       for (let i = 0; i < steps; i++) [x, z] = moveWithCollisions(x, z, mx / steps, mz / steps, boxes);
-      c.position.set(x, EYE, z);
+      c.position.x = x;
+      c.position.z = z;
     }
 
     const { x, z } = c.position;
+    // City round (roadmap 3a-ii-c): step down off the curb to the street and back up. A short ease (a cut under
+    // reduced motion), so the 0.33 m step reads as a step, not a jolt.
+    const ground = gridRef.current.groundAt(x, z);
+    floorY.current = motion.reduced ? ground : floorY.current + (ground - floorY.current) * Math.min(1, delta * 14);
+    c.position.y = floorY.current + EYE;
     // What E would use here. A store write only when it changes, not every frame.
     const [bx, bz] = layout.boss.center;
     let next: WalkTarget = null;
@@ -258,11 +295,21 @@ export default function WalkControls({ layout }: { layout: OfficeLayout }) {
     const b = layout.bounds;
     const pad = onStreet.current ? -0.3 : 0.3;
     const inside = x > b.minX - pad && x < b.maxX + pad && z > b.minZ - pad && z < b.maxZ + pad;
+    // Round 13 (R5): which street you're on, for the 📍 chip. A store write only on a change, like walkTarget.
+    // The `inside` hysteresis already stops flicker at the door. City round: the grid names every street and
+    // avenue (and corner) in the 3 × 3 blocks; the office's left strip is still its service passage.
+    const passage = x < b.minX && x > b.minX - 4.6 && z > b.minZ - 0.2 && z < b.maxZ + 0.2;
+    const place = inside ? null : passage ? "Service passage" : gridRef.current.placeAt(x, z);
+    if (place !== placeKey.current) {
+      placeKey.current = place;
+      useStore.setState({ walkPlace: place });
+    }
     if (inside === !onStreet.current) return;
     onStreet.current = !inside;
     gl.domElement.closest(".scene-canvas")?.classList.toggle("scene--street", !inside);
   });
 
   // No position prop: a hire re-builds the layout, and a prop would teleport the boss back to the spawn.
-  return <PerspectiveCamera ref={cam} makeDefault fov={70} near={0.1} far={150} />;
+  // far 2500 (was 150): the city and its skyline; fog (City.tsx) fades the blocks long before that.
+  return <PerspectiveCamera ref={cam} makeDefault fov={prefs.fov} near={0.1} far={2500} />;
 }

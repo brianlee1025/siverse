@@ -198,7 +198,7 @@ export function OfficeScene({ snapshot }: { snapshot: Snapshot }) {
       <Sun layout={layout} look={look} />
       {walking ? (
         <Suspense fallback={null}>
-          <WalkControls layout={layout} />
+          <WalkControls layout={layout} name={snapshot.settings.companyName} />
         </Suspense>
       ) : (
         <CameraRig layout={layout} />
@@ -319,7 +319,9 @@ function CameraRig({ layout }: { layout: OfficeLayout }) {
       makeDefault
       enableDamping
       minDistance={6}
-      maxDistance={(roomSize * 2.5 + 10) * roundedFit}
+      // City round: zooming out can go about twice as far as before (≈ 190 m), so the city round the building
+      // shows. The default framing (office view) is unchanged.
+      maxDistance={(roomSize * 2.5 + 10) * roundedFit * 2.2}
       maxPolarAngle={Math.PI / 2.25}
     />
   );

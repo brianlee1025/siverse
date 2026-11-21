@@ -6,6 +6,7 @@ import { inkFor } from "../colors";
 import { useDraft } from "../drafts";
 import { failureKind, minutesLeft, URGENT_MINUTES, resetHint, scheduleLabel, skippedFollowers, splitBrief } from "../failures";
 import { api, useStore } from "../store";
+import { canWalk, requestLook } from "../world/WalkHud";
 import { DriveMarkdown } from "./DriveMarkdown";
 import { Elapsed } from "./Elapsed";
 import { STATUS_LABEL } from "./TaskBoard";
@@ -70,6 +71,8 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
     const timer = setTimeout(() => setConfirming(false), CONFIRM_MS);
     return () => clearTimeout(timer);
   }, [confirming]);
+  // Round 13 (R8): "🚶 Walk to <dept>" needs a mouse. Read once, above the early return (hooks order).
+  const [walkable] = useState(canWalk);
 
   if (!task) return null;
   const department = snapshot.departments.find((d) => d.id === task.departmentId);
@@ -118,6 +121,23 @@ export function TaskDetail({ snapshot }: { snapshot: Snapshot }) {
               }}
             >
               ← Back to {department.name}
+            </button>
+          )}
+          {/* Round 13 (R8): the same path as the department window's Walk there (round 12). Office teams aren't
+              in the scene while the AI office is off (App.tsx visibleSnapshot), so the jump would go nowhere.
+              It can't hide an approval: a new ask still releases the lock (WalkControls). */}
+          {walkable && department && !fromClaudeCode && snapshot.settings.aiOffice && (
+            <button
+              type="button"
+              className="task-detail__back"
+              onClick={() => {
+                useStore.setState({ taskFrom: null });
+                selectTask(null);
+                useStore.getState().walkToDepartment(department.id);
+                requestLook(); // still inside the click, or the browser refuses the lock
+              }}
+            >
+              🚶 Walk to {department.name}
             </button>
           )}
           <small style={{ color: department && inkFor(department.color) }}>

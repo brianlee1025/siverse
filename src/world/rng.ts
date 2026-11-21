@@ -29,4 +29,7 @@ export const rngFor = (seed: number, ...keys: (string | number)[]) => mulberry32
 /** A whole number from lo to hi, both included. */
 export const between = (r: () => number, lo: number, hi: number) => lo + Math.floor(r() * (hi - lo + 1));
 
-export const pick = <T,>(r: () => number, list: readonly T[]): T => list[Math.floor(r() * list.length)];
+/** The city's seed: ?seed= for this visit, else the company name's hash. The one place this lives. */
+export const citySeedFor = (companyName: string, override: number | null) => override ?? hashSeed(companyName.trim() || "Office");
+
+export const pick =<T,>(r: () => number, list: readonly T[]): T => list[Math.floor(r() * list.length)];
